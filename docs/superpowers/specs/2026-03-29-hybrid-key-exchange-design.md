@@ -1,7 +1,7 @@
 # Hybrid X25519 + ML-KEM Key Exchange — Design Spec
 
 **Date:** 2026-03-29
-**Status:** Revised (v2)
+**Status:** Revised (v3)
 **Author:** Scott Hughes + Claude
 
 ## Goal
@@ -33,8 +33,10 @@ The correct characterization is: **hybrid confidentiality with ciphertext integr
 **`cryptography>=42.0.0`** added to `pyproject.toml` dependencies. Provides:
 
 - `cryptography.hazmat.primitives.asymmetric.x25519` — X25519 keygen + ECDH
-- `cryptography.hazmat.primitives.kdf.hkdf` — HKDF-SHA256 (Extract + Expand)
+- `cryptography.hazmat.primitives.kdf.hkdf.HKDFExpand` — HKDF-Expand step
 - `cryptography.hazmat.primitives.ciphers.aead.AESGCM` — AES-256-GCM
+
+**HKDF implementation note:** Stable `cryptography` (through at least 46.0.x) does not expose a public `HKDF.extract()` method. The Extract step is implemented using stdlib `hmac.new(key=salt, msg=ikm, digestmod=hashlib.sha256).digest()`, which is the exact computation defined by RFC 5869 Section 2.1. The Expand step uses `cryptography`'s `HKDFExpand`. This is the standard pattern for one-Extract-multiple-Expand on stable releases.
 
 ## New Tools
 
@@ -156,13 +158,14 @@ Exactly one of `plaintext` (UTF-8 string) or `plaintext_base64` (base64-encoded 
     "aead_algorithm": "aes-256-gcm",
     "x25519_ephemeral_public_key": "<base64, 32 bytes>",
     "pqc_ciphertext": "<base64>",
-    "ciphertext": "<base64, encrypted data + 16-byte GCM tag>",
-    "nonce": "<base64, 12 bytes>"
+    "ciphertext": "<base64, encrypted data + 16-byte GCM tag>"
   }
 }
 ```
 
 The `ciphertext` field contains the encrypted data with the 16-byte GCM authentication tag appended, exactly as returned by `AESGCM.encrypt()`. This is a single opaque blob, not a split of encrypted_data + tag.
+
+**No nonce field in the envelope.** The nonce is derived deterministically from the PRK (see Cryptographic Construction below). The recipient rederives the PRK from the ciphertexts + their secret keys, then derives the same nonce. Transmitting it would be redundant.
 
 #### `pqc_hybrid_open`
 
@@ -210,11 +213,18 @@ This is wire format. It must be byte-for-byte identical everywhere it appears. T
 
 ### Combiner (HKDF-SHA256)
 
-Follows NIST SP 800-227, TLS 1.3 (`X25519MLKEM768`), and RFC 5869.
+Inspired by the TLS 1.3 `X25519MLKEM768` construction and X-Wing KEM, adapted for this protocol. Uses RFC 5869 HKDF with context binding per NIST SP 800-227.
+
+SP 800-227 warns that the naive combiner `K <- KDF(K1, K2)` does not generically preserve IND-CCA security, and recommends that combiners include ciphertexts and/or encapsulation keys alongside shared secrets. Following X-Wing's pattern (which includes the X25519 ephemeral public key in its combiner input but omits the ML-KEM ciphertext because ML-KEM's Fujisaki-Okamoto transform already provides internal ciphertext binding):
 
 ```
-# Step 1: Concatenate shared secrets (FIPS-approved scheme first per SP 800-56Cr2)
-ikm = ss_mlkem (32 bytes) || ss_x25519 (32 bytes)
+# Step 1: Concatenate shared secrets + X25519 ephemeral public key for context binding
+# FIPS-approved scheme first per SP 800-56Cr2
+ikm = ss_mlkem (32 bytes) || ss_x25519 (32 bytes) || epk_x25519 (32 bytes)
+
+# ML-KEM ciphertext is NOT included in IKM. ML-KEM's FO transform already binds
+# the ciphertext to the shared secret internally. This follows X-Wing's design
+# rationale: including ct_mlkem would be redundant.
 
 # Step 2: Extract — concentrate entropy into a PRK
 prk = HKDF-Extract(salt=None, ikm=ikm)
@@ -222,7 +232,9 @@ prk = HKDF-Extract(salt=None, ikm=ikm)
 # Step 3: Expand — derive keys with domain-separated info strings
 ```
 
-**Salt:** `None` (interpreted as zero-filled `HashLen` bytes per RFC 5869). This is acceptable because the IKM is already the concatenation of two independent shared secrets with sufficient entropy. RFC 5869 notes that salt materially strengthens HKDF and should be used when available; in this construction, no independent salt material is available, so zero-salt is the standard choice, consistent with TLS 1.3 and Signal PQXDH. This is an acceptable design choice, not the only defensible one.
+Including `epk_x25519` in the IKM binds the derived keys to the specific key exchange instance. An attacker who substitutes a different ephemeral key will produce a different PRK, even if the shared secrets happen to match (e.g., under a hypothetical partial break).
+
+**Salt:** `None` (interpreted as zero-filled `HashLen` bytes per RFC 5869). This is an acceptable design choice for this protocol: the IKM already contains 96 bytes from two independent shared secrets plus a public key. RFC 5869 notes that salt materially strengthens HKDF and should be used when available; here, no independent salt material is available. Zero-salt is consistent with how TLS 1.3 and Signal PQXDH handle their respective key schedules, but this protocol's construction is simpler than either of those and should not be described as equivalent to them.
 
 ### X25519 Validation
 
@@ -257,32 +269,39 @@ b"pqc-mcp-v1|x25519|ml-kem-768|aes-256-gcm-nonce"
 ### Key Derivation (Building Block Layer)
 
 ```python
-shared_secret = HKDF-Expand(
-    prk,
-    info=f"pqc-mcp-v1|x25519|{kem_alg_canonical}|shared-secret".encode(),
-    length=32
-)
+# Extract: HMAC-SHA256 per RFC 5869 Section 2.1
+salt = b"\x00" * 32  # HashLen zero bytes
+prk = hmac.new(key=salt, msg=ss_mlkem + ss_x25519 + epk_x25519, digestmod=hashlib.sha256).digest()
+
+# Expand: derive shared secret
+shared_secret = HKDFExpand(
+    algorithm=hashes.SHA256(),
+    length=32,
+    info=f"pqc-mcp-v1|x25519|{kem_alg_canonical}|shared-secret".encode()
+).derive(prk)
 ```
 
 Where `kem_alg_canonical` is the lowercase hyphenated form (e.g., `ml-kem-768`).
 
 ### Key Derivation (Envelope Layer)
 
-```python
-aes_key = HKDF-Expand(
-    prk,
-    info=f"pqc-mcp-v1|x25519|{kem_alg_canonical}|aes-256-gcm-key".encode(),
-    length=32
-)
+Uses the same PRK as the building-block layer (same IKM), but derives different outputs via distinct info strings:
 
-nonce = HKDF-Expand(
-    prk,
-    info=f"pqc-mcp-v1|x25519|{kem_alg_canonical}|aes-256-gcm-nonce".encode(),
-    length=12
-)
+```python
+aes_key = HKDFExpand(
+    algorithm=hashes.SHA256(),
+    length=32,
+    info=f"pqc-mcp-v1|x25519|{kem_alg_canonical}|aes-256-gcm-key".encode()
+).derive(prk)
+
+nonce = HKDFExpand(
+    algorithm=hashes.SHA256(),
+    length=12,
+    info=f"pqc-mcp-v1|x25519|{kem_alg_canonical}|aes-256-gcm-nonce".encode()
+).derive(prk)
 ```
 
-The nonce is deterministic, not random. This is safe because each seal generates a fresh ephemeral X25519 keypair, producing a unique PRK per operation. A deterministic nonce from a unique PRK cannot collide.
+The nonce is deterministic, not random. This is safe because each seal generates a fresh ephemeral X25519 keypair, producing a unique IKM (and therefore unique PRK) per operation. A deterministic nonce from a unique PRK cannot collide. The nonce is not transmitted in the envelope — the recipient rederives it identically from their own decapsulation.
 
 ### Authenticated Associated Data (AAD)
 
@@ -331,17 +350,21 @@ The liboqs API still receives the original casing. Only the suite-ID and info st
 - Forward secrecy against recipient key compromise (one-pass, long-term recipient keys)
 - Sender authentication (anonymous sealed-box — anyone with the public keys can seal)
 
-### Standards Alignment
+### Standards References
 
-| Decision | Aligned With |
+This construction is simpler than TLS 1.3 or Signal PQXDH and should not be described as equivalent to either. It is inspired by their design choices and follows the same primary sources:
+
+| Decision | Informed By |
 |----------|-------------|
-| ML-KEM secret first in IKM | NIST SP 800-56Cr2, TLS 1.3 `X25519MLKEM768` |
-| `salt=None` | TLS 1.3, Signal PQXDH (acceptable, not uniquely correct) |
+| ML-KEM secret first in IKM | NIST SP 800-56Cr2 (FIPS-approved scheme first) |
+| Context binding via `epk_x25519` in IKM | X-Wing KEM (draft-connolly-cfrg-xwing-kem), SP 800-227 combiner guidance |
+| `salt=None` | RFC 5869 (acceptable when IKM has sufficient entropy) |
 | Single Extract + multiple Expand | RFC 5869, HPKE (RFC 9180) |
-| Algorithm IDs in info + AAD | Signal PQXDH, HPKE suite_id, SP 800-227 |
-| Concatenation combiner | NIST SP 800-227, dual-PRF security proof (Bindel et al.) |
+| Algorithm IDs in info + AAD | HPKE suite_id pattern, SP 800-227 domain separation |
+| Concatenation combiner with public values | SP 800-227, dual-PRF security proof (Bindel et al.) |
 | Raw 32-byte X25519 encoding | RFC 7748 |
-| All-zero shared secret check | RFC 7748 Section 6.1 |
+| All-zero shared secret check | RFC 7748 Section 6.1, TLS 1.3 hybrid draft |
+| HMAC-SHA256 for HKDF-Extract | RFC 5869 Section 2.1 (HKDF-Extract = HMAC-Hash) |
 
 ## Code Organization
 
@@ -354,7 +377,7 @@ Pure crypto logic, no MCP dependencies. Contains:
 - `hybrid_decap(classical_sk, pqc_sk, x25519_epk, pqc_ct, kem_algorithm) -> dict` — decapsulate, return shared secret
 - `hybrid_seal(plaintext_bytes, recipient_classical_pk, recipient_pqc_pk, kem_algorithm) -> dict` — full encrypt
 - `hybrid_open(envelope, classical_sk, pqc_sk) -> dict` — full decrypt
-- `_derive_prk(ss_mlkem, ss_x25519) -> bytes` — internal HKDF-Extract
+- `_derive_prk(ss_mlkem, ss_x25519, epk_x25519) -> bytes` — internal HKDF-Extract via HMAC-SHA256
 - `_expand_key(prk, kem_algorithm, purpose, length) -> bytes` — internal HKDF-Expand with canonical suite-ID
 - `_canonicalize_kem(algorithm) -> str` — map liboqs name to canonical lowercase
 - `_validate_x25519_key(key_bytes, label) -> None` — length check, raises ValueError
@@ -377,7 +400,7 @@ Test cases:
 2. **Encap/decap roundtrip** — shared secrets match
 3. **Seal/open roundtrip (string)** — plaintext recovers via `plaintext` field
 4. **Seal/open roundtrip (binary)** — binary data recovers via `plaintext_base64` field
-5. **Wrong key decap** — produces different shared secret (ML-KEM implicit rejection)
+5. **Wrong key decap** — ML-KEM performs implicit rejection: returns a deterministic but incorrect shared secret rather than an explicit error. Test verifies returned secret does not match the sender's (except with negligible collision probability)
 6. **Wrong key open** — AES-GCM tag verification fails (raises error)
 7. **Tampered ciphertext** — open fails
 8. **Tampered envelope metadata** — AAD mismatch, GCM tag fails
@@ -386,6 +409,8 @@ Test cases:
 11. **Domain separation** — building-block shared secret differs from seal's AES key (same PRK, different Expand info)
 12. **X25519 key length validation** — wrong-length keys rejected with clear error
 13. **Non-UTF-8 binary** — seal with `plaintext_base64`, open returns `plaintext: null` + valid `plaintext_base64`
+14. **Nonce rederivation** — verify that open succeeds without any nonce in the envelope (nonce is derived from PRK)
+15. **All-zero X25519 shared secret** — rejected with clear error when small-order public key is provided
 
 ### Modified files: `pyproject.toml`, `README.md`, `CHANGELOG.md`
 
