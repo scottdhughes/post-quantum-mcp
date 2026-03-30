@@ -17,10 +17,11 @@ Thank you for your interest in contributing! This project aims to make post-quan
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
 4. Add tests if applicable
-5. Run the test suite: `python -m pytest`
-6. Format code: `python -m black pqc_mcp_server/`
-7. Commit with a clear message
-8. Push and create a Pull Request
+5. Run the test suite: `uv run pytest tests/ -v`
+6. Format code: `uv run black pqc_mcp_server/ tests/`
+7. Type check: `uv run mypy pqc_mcp_server/`
+8. Commit with a clear message
+9. Push and create a Pull Request
 
 ### Code Style
 
@@ -54,18 +55,17 @@ When adding new algorithms:
 git clone https://github.com/YOUR_USERNAME/post-quantum-mcp.git
 cd post-quantum-mcp
 
-# Create virtual environment
-uv venv --python 3.10 .venv
-source .venv/bin/activate
-
-# Install dev dependencies
-uv pip install liboqs-python "mcp>=1.0.0" pytest black mypy
+# Install all dependencies (creates .venv automatically)
+uv sync --all-extras
 
 # Run tests
-python -m pytest
+uv run pytest tests/ -v
 
-# Check types
-python -m mypy pqc_mcp_server/
+# Format code
+uv run black pqc_mcp_server/ tests/
+
+# Type check
+uv run mypy pqc_mcp_server/
 ```
 
 ## Questions?

@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Canonical length-prefixed binary transcript for signature input
 - `SenderVerificationError` distinct from `InvalidTag` for clear error separation
 - Signature verified before decryption (verify-then-decrypt ordering)
-- 106 tests across the full suite
+- 110 tests across the full suite
 
 ### Fixed
 - Fingerprint-binding bug: `hybrid_auth_open` now recomputes `SHA3-256(sender_public_key)` and verifies it matches the envelope's embedded fingerprint before checking expected sender identity. Previously, a malicious sender could sign with their own key while placing a different fingerprint in the envelope.

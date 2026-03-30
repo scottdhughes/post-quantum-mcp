@@ -440,7 +440,7 @@ def hybrid_auth_open(
         if sender_pk != expected_sender_public_key:
             raise SenderVerificationError("Sender public key does not match expected key")
     else:
-        assert expected_sender_fingerprint is not None
+        # expected_sender_fingerprint must be non-None here (enforced above)
         if envelope_fp != expected_sender_fingerprint:
             raise SenderVerificationError(
                 "Sender key fingerprint does not match expected fingerprint"

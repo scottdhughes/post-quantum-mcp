@@ -27,6 +27,8 @@ except ImportError:
     MechanismNotEnabledError = Exception
 
 try:
+    from cryptography.exceptions import InvalidTag
+
     from pqc_mcp_server.hybrid import (
         hybrid_keygen,
         hybrid_encap,
@@ -44,6 +46,7 @@ try:
     HAS_HYBRID = True
 except ImportError:
     HAS_HYBRID = False
+    InvalidTag = Exception  # type: ignore[misc,assignment]
     SenderVerificationError = Exception  # type: ignore[misc,assignment]
 
 from mcp.server import Server
@@ -52,37 +55,6 @@ from mcp.types import Tool, TextContent
 
 # Initialize MCP server
 server = Server("pqc-mcp-server")
-
-# NIST PQC Algorithm mappings
-KEM_ALGORITHMS = {
-    "ML-KEM-512": "ML-KEM-512",
-    "ML-KEM-768": "ML-KEM-768",
-    "ML-KEM-1024": "ML-KEM-1024",
-    "Kyber512": "Kyber512",
-    "Kyber768": "Kyber768",
-    "Kyber1024": "Kyber1024",
-    "FrodoKEM-640-SHAKE": "FrodoKEM-640-SHAKE",
-    "FrodoKEM-976-SHAKE": "FrodoKEM-976-SHAKE",
-    "FrodoKEM-1344-SHAKE": "FrodoKEM-1344-SHAKE",
-    "HQC-128": "HQC-128",
-    "HQC-192": "HQC-192",
-    "HQC-256": "HQC-256",
-}
-
-SIG_ALGORITHMS = {
-    "ML-DSA-44": "ML-DSA-44",
-    "ML-DSA-65": "ML-DSA-65",
-    "ML-DSA-87": "ML-DSA-87",
-    "Dilithium2": "Dilithium2",
-    "Dilithium3": "Dilithium3",
-    "Dilithium5": "Dilithium5",
-    "Falcon-512": "Falcon-512",
-    "Falcon-1024": "Falcon-1024",
-    "SPHINCS+-SHA2-128f-simple": "SPHINCS+-SHA2-128f-simple",
-    "SPHINCS+-SHA2-128s-simple": "SPHINCS+-SHA2-128s-simple",
-    "SPHINCS+-SHA2-192f-simple": "SPHINCS+-SHA2-192f-simple",
-    "SPHINCS+-SHA2-256f-simple": "SPHINCS+-SHA2-256f-simple",
-}
 
 
 def get_available_algorithms() -> dict:
@@ -901,21 +873,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 ]
             except ValueError as e:
                 return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
-            except Exception as e:
-                # Catches cryptography.exceptions.InvalidTag on decryption failure
-                if type(e).__name__ == "InvalidTag":
-                    return [
-                        TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {
-                                    "error": "Decryption failed: ciphertext, key, or envelope metadata is invalid"
-                                },
-                                indent=2,
-                            ),
-                        )
-                    ]
-                raise
+            except InvalidTag:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "error": "Decryption failed: ciphertext, key, or envelope metadata is invalid"
+                            },
+                            indent=2,
+                        ),
+                    )
+                ]
 
         else:
             return [
