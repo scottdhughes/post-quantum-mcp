@@ -21,6 +21,9 @@ from pqc_mcp_server.hybrid import (
     _kem_combine,
     _build_aad,
     _derive_aead_key_and_nonce,
+    hybrid_keygen,
+    hybrid_encap,
+    hybrid_decap,
 )
 
 
@@ -121,3 +124,73 @@ class TestAAD:
         epk = b"\x01" * 32
         ct = b"\x02" * 50
         assert _build_aad(epk, ct) == _build_aad(epk, ct)
+
+
+class TestKeygen:
+    def test_keygen_returns_suite(self):
+        result = hybrid_keygen()
+        assert result["suite"] == SUITE
+
+    def test_keygen_x25519_keys_are_32_bytes(self):
+        result = hybrid_keygen()
+        pk = base64.b64decode(result["classical"]["public_key"])
+        sk = base64.b64decode(result["classical"]["secret_key"])
+        assert len(pk) == 32
+        assert len(sk) == 32
+
+    def test_keygen_pqc_keys_exist(self):
+        result = hybrid_keygen()
+        assert result["pqc"]["algorithm"] == "ML-KEM-768"
+        pk = base64.b64decode(result["pqc"]["public_key"])
+        sk = base64.b64decode(result["pqc"]["secret_key"])
+        assert len(pk) > 0
+        assert len(sk) > 0
+
+    def test_keygen_unique(self):
+        r1 = hybrid_keygen()
+        r2 = hybrid_keygen()
+        assert r1["classical"]["public_key"] != r2["classical"]["public_key"]
+        assert r1["pqc"]["public_key"] != r2["pqc"]["public_key"]
+
+
+class TestEncapDecap:
+    def test_encap_decap_roundtrip(self):
+        keys = hybrid_keygen()
+        encap_result = hybrid_encap(
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        assert encap_result["suite"] == SUITE
+        assert len(base64.b64decode(encap_result["shared_secret"])) == 32
+        assert len(base64.b64decode(encap_result["x25519_ephemeral_public_key"])) == 32
+
+        decap_result = hybrid_decap(
+            base64.b64decode(keys["classical"]["secret_key"]),
+            base64.b64decode(keys["pqc"]["secret_key"]),
+            base64.b64decode(encap_result["x25519_ephemeral_public_key"]),
+            base64.b64decode(encap_result["pqc_ciphertext"]),
+        )
+        assert decap_result["shared_secret"] == encap_result["shared_secret"]
+        assert decap_result["shared_secret_hex"] == encap_result["shared_secret_hex"]
+
+    def test_wrong_key_decap_implicit_rejection(self):
+        """ML-KEM performs implicit rejection: returns a deterministic but
+        incorrect shared secret rather than an explicit error."""
+        k1 = hybrid_keygen()
+        k2 = hybrid_keygen()
+        encap_result = hybrid_encap(
+            base64.b64decode(k1["classical"]["public_key"]),
+            base64.b64decode(k1["pqc"]["public_key"]),
+        )
+        decap_wrong = hybrid_decap(
+            base64.b64decode(k2["classical"]["secret_key"]),
+            base64.b64decode(k2["pqc"]["secret_key"]),
+            base64.b64decode(encap_result["x25519_ephemeral_public_key"]),
+            base64.b64decode(encap_result["pqc_ciphertext"]),
+        )
+        assert decap_wrong["shared_secret"] != encap_result["shared_secret"]
+
+    def test_x25519_key_length_validation(self):
+        keys = hybrid_keygen()
+        with pytest.raises(ValueError, match="must be exactly 32 bytes"):
+            hybrid_encap(b"\x01" * 31, base64.b64decode(keys["pqc"]["public_key"]))
