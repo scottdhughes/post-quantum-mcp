@@ -45,7 +45,15 @@ PQC_TOOLS: list[Tool] = [
                 "algorithm": {
                     "type": "string",
                     "description": "Algorithm name (e.g., 'ML-KEM-768', 'ML-DSA-65')",
-                }
+                },
+                "store_as": {
+                    "type": "string",
+                    "description": "Optional name to store the keypair handle (secret key never returned)",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "If true, overwrite an existing stored key with the same name",
+                },
             },
             "required": ["algorithm"],
         },
@@ -58,6 +66,10 @@ PQC_TOOLS: list[Tool] = [
             "properties": {
                 "algorithm": {"type": "string", "description": "KEM algorithm name"},
                 "public_key": {"type": "string", "description": "Base64-encoded public key"},
+                "key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored KEM keypair",
+                },
             },
             "required": ["algorithm", "public_key"],
         },
@@ -73,6 +85,10 @@ PQC_TOOLS: list[Tool] = [
                 "ciphertext": {
                     "type": "string",
                     "description": "Base64-encoded ciphertext from encapsulation",
+                },
+                "key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored KEM keypair",
                 },
             },
             "required": ["algorithm", "secret_key", "ciphertext"],
@@ -96,6 +112,10 @@ PQC_TOOLS: list[Tool] = [
                     "type": "string",
                     "description": "Message to sign (will be UTF-8 encoded)",
                 },
+                "key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored signing keypair",
+                },
             },
             "required": ["algorithm", "secret_key", "message"],
         },
@@ -113,6 +133,10 @@ PQC_TOOLS: list[Tool] = [
                 },
                 "message": {"type": "string", "description": "Original message"},
                 "signature": {"type": "string", "description": "Base64-encoded signature"},
+                "key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored signing keypair",
+                },
             },
             "required": ["algorithm", "public_key", "message", "signature"],
         },
@@ -145,7 +169,19 @@ PQC_TOOLS: list[Tool] = [
     Tool(
         name="pqc_hybrid_keygen",
         description="Generate a hybrid X25519 + ML-KEM-768 keypair bundle (suite: mlkem768-x25519-sha3-256). Research/prototyping only.",
-        inputSchema={"type": "object", "properties": {}},
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "store_as": {
+                    "type": "string",
+                    "description": "Optional name to store the keypair handle (secret key never returned)",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "If true, overwrite an existing stored key with the same name",
+                },
+            },
+        },
     ),
     Tool(
         name="pqc_hybrid_encap",
@@ -160,6 +196,10 @@ PQC_TOOLS: list[Tool] = [
                 "pqc_public_key": {
                     "type": "string",
                     "description": "Base64-encoded ML-KEM-768 public key",
+                },
+                "key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored hybrid key bundle",
                 },
             },
             "required": ["classical_public_key", "pqc_public_key"],
@@ -186,6 +226,10 @@ PQC_TOOLS: list[Tool] = [
                 "pqc_ciphertext": {
                     "type": "string",
                     "description": "Base64-encoded ML-KEM-768 ciphertext from encap",
+                },
+                "key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored hybrid key bundle",
                 },
             },
             "required": [
@@ -218,8 +262,11 @@ PQC_TOOLS: list[Tool] = [
                     "type": "string",
                     "description": "Base64-encoded ML-KEM-768 public key",
                 },
+                "recipient_key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored hybrid key bundle",
+                },
             },
-            "required": ["recipient_classical_public_key", "recipient_pqc_public_key"],
         },
     ),
     Tool(
@@ -239,6 +286,10 @@ PQC_TOOLS: list[Tool] = [
                 "pqc_secret_key": {
                     "type": "string",
                     "description": "Base64-encoded ML-KEM-768 secret key",
+                },
+                "key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored hybrid key bundle",
                 },
             },
             "required": ["envelope", "classical_secret_key", "pqc_secret_key"],
@@ -274,6 +325,14 @@ PQC_TOOLS: list[Tool] = [
                     "type": "string",
                     "description": "Base64-encoded ML-DSA-65 public/verification key",
                 },
+                "recipient_key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored hybrid key bundle for recipient",
+                },
+                "sender_key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored signing keypair for sender",
+                },
             },
             "required": [
                 "recipient_classical_public_key",
@@ -308,6 +367,10 @@ PQC_TOOLS: list[Tool] = [
                 "expected_sender_fingerprint": {
                     "type": "string",
                     "description": "SHA3-256 hex fingerprint of sender public key",
+                },
+                "key_store_name": {
+                    "type": "string",
+                    "description": "Name of stored hybrid key bundle",
                 },
             },
             "required": ["envelope", "classical_secret_key", "pqc_secret_key"],

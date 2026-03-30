@@ -330,6 +330,44 @@ Verify sender + decrypt. Requires either `expected_sender_public_key` or `expect
 
 > "Seal a message to Bob and sign it with my ML-DSA key, then have Bob open it using my fingerprint"
 
+## Key Handles (Secret Redaction)
+
+Opt-in mode where secret keys are stored process-locally and never appear in tool output. Handles are process-global and lost on server restart.
+
+### Generating with handles
+```json
+// pqc_hybrid_keygen with store_as
+{"store_as": "alice"}
+
+// Output — no secret keys
+{
+  "suite": "mlkem768-x25519-sha3-256",
+  "handle": "alice",
+  "classical": {"algorithm": "X25519", "public_key": "...", "fingerprint": "..."},
+  "pqc": {"algorithm": "ML-KEM-768", "public_key": "...", "fingerprint": "..."}
+}
+```
+
+### Using handles in downstream tools
+```json
+// pqc_hybrid_seal with store name instead of raw keys
+{
+  "plaintext": "Hello via handle!",
+  "recipient_key_store_name": "alice"
+}
+
+// pqc_hybrid_auth_seal with two store names
+{
+  "plaintext": "Authenticated via handles",
+  "recipient_key_store_name": "alice",
+  "sender_key_store_name": "bob-signing"
+}
+```
+
+Generic PQC tools (`pqc_sign`, `pqc_verify`, `pqc_encapsulate`, `pqc_decapsulate`) also accept `key_store_name`.
+
+Providing both a store name and raw keys for the same role is an error.
+
 ## Supported Algorithms
 
 > **Note:** Legacy algorithm names (Kyber, Dilithium, SPHINCS+) are accepted as aliases for compatibility with older liboqs versions.

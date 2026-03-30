@@ -338,3 +338,58 @@ async def test_keygen_includes_fingerprints(call_tool):
     assert "fingerprint" in keys["pqc"]
     assert len(keys["classical"]["fingerprint"]) == 64
     assert len(keys["pqc"]["fingerprint"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_store_as_via_mcp_returns_handle(call_tool):
+    """store_as through MCP handler returns no secrets."""
+    result = await call_tool("pqc_hybrid_keygen", {"store_as": "mcp-alice"})
+    assert result["handle"] == "mcp-alice"
+    assert "secret_key" not in result.get("classical", {})
+    assert "secret_key" not in result.get("pqc", {})
+
+
+@pytest.mark.asyncio
+async def test_key_store_name_via_mcp_resolves(call_tool):
+    """key_store_name through MCP handler resolves correctly."""
+    # Generate and store
+    await call_tool("pqc_hybrid_keygen", {"store_as": "mcp-bob"})
+    # Seal using store name
+    seal_result = await call_tool(
+        "pqc_hybrid_seal",
+        {
+            "plaintext": "mcp store test",
+            "recipient_key_store_name": "mcp-bob",
+        },
+    )
+    assert "envelope" in seal_result
+
+
+@pytest.mark.asyncio
+async def test_store_name_error_via_mcp(call_tool):
+    """Nonexistent store name returns structured JSON error via MCP."""
+    result = await call_tool(
+        "pqc_hybrid_seal",
+        {
+            "plaintext": "x",
+            "recipient_key_store_name": "nonexistent",
+        },
+    )
+    assert "error" in result
+    assert "not found" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_conflict_error_via_mcp(call_tool):
+    """Both store name and raw keys returns structured JSON error via MCP."""
+    await call_tool("pqc_hybrid_keygen", {"store_as": "mcp-conflict"})
+    result = await call_tool(
+        "pqc_hybrid_seal",
+        {
+            "plaintext": "x",
+            "recipient_key_store_name": "mcp-conflict",
+            "recipient_classical_public_key": "AAAA",
+        },
+    )
+    assert "error" in result
+    assert "not both" in result["error"]

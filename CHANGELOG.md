@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Secret-handle keyring: `store_as` parameter on `pqc_hybrid_keygen` and `pqc_generate_keypair`
+- `key_store_name` / `recipient_key_store_name` / `sender_key_store_name` on all downstream tools
+- Handle-stored keys never appear in tool output (public material + fingerprints only)
+- Collision protection: `store_as` fails on name collision unless `overwrite: true`
+- Conflict detection: store name + raw keys in same call = error
+- Type validation: hybrid vs flat, signature vs KEM, algorithm mismatch via liboqs canonical names
+- Fingerprint included in flat keypair handle output
+
 ## [0.3.0] - 2026-03-30
 
 ### Added
