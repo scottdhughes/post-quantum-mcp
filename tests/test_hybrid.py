@@ -24,6 +24,8 @@ from pqc_mcp_server.hybrid import (
     hybrid_keygen,
     hybrid_encap,
     hybrid_decap,
+    hybrid_seal,
+    hybrid_open,
 )
 
 
@@ -194,3 +196,177 @@ class TestEncapDecap:
         keys = hybrid_keygen()
         with pytest.raises(ValueError, match="must be exactly 32 bytes"):
             hybrid_encap(b"\x01" * 31, base64.b64decode(keys["pqc"]["public_key"]))
+
+
+class TestSealOpen:
+    def test_seal_open_string_roundtrip(self):
+        keys = hybrid_keygen()
+        envelope = hybrid_seal(
+            b"Hello, quantum world!",
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        assert envelope["version"] == "pqc-mcp-v1"
+        assert envelope["suite"] == SUITE
+        assert "ciphertext" in envelope
+        assert "nonce" not in envelope  # nonce is derived, not transmitted
+
+        result = hybrid_open(
+            envelope,
+            base64.b64decode(keys["classical"]["secret_key"]),
+            base64.b64decode(keys["pqc"]["secret_key"]),
+        )
+        assert result["plaintext"] == "Hello, quantum world!"
+        assert result["suite"] == SUITE
+
+    def test_seal_open_binary_roundtrip(self):
+        keys = hybrid_keygen()
+        binary_data = bytes(range(256))
+        envelope = hybrid_seal(
+            binary_data,
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        result = hybrid_open(
+            envelope,
+            base64.b64decode(keys["classical"]["secret_key"]),
+            base64.b64decode(keys["pqc"]["secret_key"]),
+        )
+        assert base64.b64decode(result["plaintext_base64"]) == binary_data
+
+    def test_seal_open_non_utf8_binary(self):
+        keys = hybrid_keygen()
+        non_utf8 = b"\x80\x81\x82\xff\xfe"
+        envelope = hybrid_seal(
+            non_utf8,
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        result = hybrid_open(
+            envelope,
+            base64.b64decode(keys["classical"]["secret_key"]),
+            base64.b64decode(keys["pqc"]["secret_key"]),
+        )
+        assert result["plaintext"] is None
+        assert base64.b64decode(result["plaintext_base64"]) == non_utf8
+
+    def test_wrong_key_open_fails(self):
+        from cryptography.exceptions import InvalidTag
+
+        k1 = hybrid_keygen()
+        k2 = hybrid_keygen()
+        envelope = hybrid_seal(
+            b"secret",
+            base64.b64decode(k1["classical"]["public_key"]),
+            base64.b64decode(k1["pqc"]["public_key"]),
+        )
+        with pytest.raises(InvalidTag):
+            hybrid_open(
+                envelope,
+                base64.b64decode(k2["classical"]["secret_key"]),
+                base64.b64decode(k2["pqc"]["secret_key"]),
+            )
+
+    def test_tampered_ciphertext_fails(self):
+        from cryptography.exceptions import InvalidTag
+
+        keys = hybrid_keygen()
+        envelope = hybrid_seal(
+            b"data",
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        ct = bytearray(base64.b64decode(envelope["ciphertext"]))
+        ct[0] ^= 0xFF
+        envelope["ciphertext"] = base64.b64encode(bytes(ct)).decode()
+        with pytest.raises(InvalidTag):
+            hybrid_open(
+                envelope,
+                base64.b64decode(keys["classical"]["secret_key"]),
+                base64.b64decode(keys["pqc"]["secret_key"]),
+            )
+
+    def test_tampered_pqc_ciphertext_fails(self):
+        """Tampered ML-KEM ciphertext changes the AAD, causing GCM tag mismatch."""
+        from cryptography.exceptions import InvalidTag
+
+        keys = hybrid_keygen()
+        envelope = hybrid_seal(
+            b"data",
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        ct = bytearray(base64.b64decode(envelope["pqc_ciphertext"]))
+        ct[0] ^= 0xFF
+        envelope["pqc_ciphertext"] = base64.b64encode(bytes(ct)).decode()
+        with pytest.raises(InvalidTag):
+            hybrid_open(
+                envelope,
+                base64.b64decode(keys["classical"]["secret_key"]),
+                base64.b64decode(keys["pqc"]["secret_key"]),
+            )
+
+    def test_tampered_epk_fails(self):
+        """Tampered ephemeral key changes both ECDH shared secret and AAD."""
+        from cryptography.exceptions import InvalidTag
+
+        keys = hybrid_keygen()
+        envelope = hybrid_seal(
+            b"data",
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        epk = bytearray(base64.b64decode(envelope["x25519_ephemeral_public_key"]))
+        epk[0] ^= 0xFF
+        envelope["x25519_ephemeral_public_key"] = base64.b64encode(bytes(epk)).decode()
+        with pytest.raises(InvalidTag):
+            hybrid_open(
+                envelope,
+                base64.b64decode(keys["classical"]["secret_key"]),
+                base64.b64decode(keys["pqc"]["secret_key"]),
+            )
+
+    def test_bad_version_rejected(self):
+        keys = hybrid_keygen()
+        envelope = hybrid_seal(
+            b"data",
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        envelope["version"] = "pqc-mcp-v99"
+        with pytest.raises(ValueError, match="Unsupported envelope version"):
+            hybrid_open(
+                envelope,
+                base64.b64decode(keys["classical"]["secret_key"]),
+                base64.b64decode(keys["pqc"]["secret_key"]),
+            )
+
+    def test_bad_suite_rejected(self):
+        keys = hybrid_keygen()
+        envelope = hybrid_seal(
+            b"data",
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        envelope["suite"] = "mlkem512-x25519-sha3-256"
+        with pytest.raises(ValueError, match="Unsupported envelope suite"):
+            hybrid_open(
+                envelope,
+                base64.b64decode(keys["classical"]["secret_key"]),
+                base64.b64decode(keys["pqc"]["secret_key"]),
+            )
+
+    def test_invalid_base64_in_envelope_rejected(self):
+        keys = hybrid_keygen()
+        envelope = hybrid_seal(
+            b"data",
+            base64.b64decode(keys["classical"]["public_key"]),
+            base64.b64decode(keys["pqc"]["public_key"]),
+        )
+        envelope["ciphertext"] = "not!valid@base64###"
+        with pytest.raises(binascii.Error):
+            hybrid_open(
+                envelope,
+                base64.b64decode(keys["classical"]["secret_key"]),
+                base64.b64decode(keys["pqc"]["secret_key"]),
+            )

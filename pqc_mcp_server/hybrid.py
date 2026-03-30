@@ -178,3 +178,101 @@ def hybrid_decap(
         "shared_secret": base64.b64encode(combined_ss).decode(),
         "shared_secret_hex": combined_ss.hex(),
     }
+
+
+def hybrid_seal(
+    plaintext_bytes: bytes,
+    recipient_classical_pk: bytes,
+    recipient_pqc_pk: bytes,
+) -> dict[str, Any]:
+    """Encrypt plaintext using hybrid encapsulation + AES-256-GCM.
+
+    Anonymous sealed-box: anyone with recipient public keys can seal.
+    Single-shot: one encapsulation, one AEAD encryption.
+    """
+    _validate_x25519_key(recipient_classical_pk, "recipient_classical_public_key")
+
+    # Encapsulate (raw bytes, not base64)
+    eph_sk = X25519PrivateKey.generate()
+    eph_pk = eph_sk.public_key()
+    eph_pk_bytes = eph_pk.public_bytes(Encoding.Raw, PublicFormat.Raw)
+
+    recipient_x_pk = X25519PublicKey.from_public_bytes(recipient_classical_pk)
+    ss_x25519 = eph_sk.exchange(recipient_x_pk)
+    _check_x25519_shared_secret(ss_x25519)
+
+    kem = oqs.KeyEncapsulation("ML-KEM-768")
+    pqc_ct, ss_mlkem = kem.encap_secret(recipient_pqc_pk)
+
+    combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, recipient_classical_pk)
+
+    # Derive AEAD key + nonce
+    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss)
+
+    # Encrypt with AAD
+    aad = _build_aad(eph_pk_bytes, pqc_ct)
+    aesgcm = AESGCM(aes_key)
+    ciphertext = aesgcm.encrypt(nonce, plaintext_bytes, aad)
+
+    return {
+        "version": "pqc-mcp-v1",
+        "suite": SUITE,
+        "x25519_ephemeral_public_key": base64.b64encode(eph_pk_bytes).decode(),
+        "pqc_ciphertext": base64.b64encode(pqc_ct).decode(),
+        "ciphertext": base64.b64encode(ciphertext).decode(),
+    }
+
+
+def hybrid_open(
+    envelope: dict[str, Any],
+    classical_sk: bytes,
+    pqc_sk: bytes,
+) -> dict[str, Any]:
+    """Decrypt a sealed envelope."""
+    # Validate transmitted header fields before any crypto
+    if envelope.get("version") != "pqc-mcp-v1":
+        raise ValueError(f"Unsupported envelope version: {envelope.get('version')}")
+    if envelope.get("suite") != SUITE:
+        raise ValueError(f"Unsupported envelope suite: {envelope.get('suite')}")
+
+    _validate_x25519_key(classical_sk, "classical_secret_key")
+
+    epk_bytes = base64.b64decode(envelope["x25519_ephemeral_public_key"], validate=True)
+    pqc_ct = base64.b64decode(envelope["pqc_ciphertext"], validate=True)
+    ciphertext = base64.b64decode(envelope["ciphertext"], validate=True)
+
+    _validate_x25519_key(epk_bytes, "x25519_ephemeral_public_key")
+
+    # X25519 ECDH
+    sk = X25519PrivateKey.from_private_bytes(classical_sk)
+    peer_pk = X25519PublicKey.from_public_bytes(epk_bytes)
+    ss_x25519 = sk.exchange(peer_pk)
+    _check_x25519_shared_secret(ss_x25519)
+
+    # Derive recipient's own public key for combiner
+    pk_x25519 = sk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+
+    # ML-KEM-768 decapsulate
+    kem = oqs.KeyEncapsulation("ML-KEM-768", pqc_sk)
+    ss_mlkem = kem.decap_secret(pqc_ct)
+
+    # Combine + derive AEAD key + nonce
+    combined_ss = _kem_combine(ss_mlkem, ss_x25519, epk_bytes, pk_x25519)
+    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss)
+
+    # Decrypt with AAD verification
+    aad = _build_aad(epk_bytes, pqc_ct)
+    aesgcm = AESGCM(aes_key)
+    plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, aad)
+
+    # Try UTF-8 decode
+    try:
+        plaintext_str = plaintext_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        plaintext_str = None
+
+    return {
+        "suite": SUITE,
+        "plaintext": plaintext_str,
+        "plaintext_base64": base64.b64encode(plaintext_bytes).decode(),
+    }
