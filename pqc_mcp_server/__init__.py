@@ -26,6 +26,20 @@ except ImportError:
     MechanismNotSupportedError = Exception
     MechanismNotEnabledError = Exception
 
+try:
+    from pqc_mcp_server.hybrid import (
+        hybrid_keygen,
+        hybrid_encap,
+        hybrid_decap,
+        hybrid_seal,
+        hybrid_open,
+        SUITE as HYBRID_SUITE,
+    )
+
+    HAS_HYBRID = True
+except ImportError:
+    HAS_HYBRID = False
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
@@ -215,6 +229,108 @@ async def list_tools() -> list[Tool]:
                     "algorithm": {"type": "string", "description": "Algorithm to analyze"}
                 },
                 "required": ["algorithm"],
+            },
+        ),
+        Tool(
+            name="pqc_hybrid_keygen",
+            description="Generate a hybrid X25519 + ML-KEM-768 keypair bundle (suite: mlkem768-x25519-sha3-256). Anonymous sealed-box — research/prototyping only.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="pqc_hybrid_encap",
+            description="Perform hybrid X25519 + ML-KEM-768 key encapsulation. Returns combined shared secret + ciphertexts.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "classical_public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded raw 32-byte X25519 public key",
+                    },
+                    "pqc_public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-KEM-768 public key",
+                    },
+                },
+                "required": ["classical_public_key", "pqc_public_key"],
+            },
+        ),
+        Tool(
+            name="pqc_hybrid_decap",
+            description="Recover hybrid shared secret using both secret keys.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "classical_secret_key": {
+                        "type": "string",
+                        "description": "Base64-encoded raw 32-byte X25519 secret key",
+                    },
+                    "pqc_secret_key": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-KEM-768 secret key",
+                    },
+                    "x25519_ephemeral_public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded raw 32-byte ephemeral public key from encap",
+                    },
+                    "pqc_ciphertext": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-KEM-768 ciphertext from encap",
+                    },
+                },
+                "required": [
+                    "classical_secret_key",
+                    "pqc_secret_key",
+                    "x25519_ephemeral_public_key",
+                    "pqc_ciphertext",
+                ],
+            },
+        ),
+        Tool(
+            name="pqc_hybrid_seal",
+            description="Encrypt plaintext using hybrid X25519 + ML-KEM-768 + AES-256-GCM. Anonymous sealed-box — anyone with recipient public keys can seal. Research/prototyping only.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "plaintext": {
+                        "type": "string",
+                        "description": "UTF-8 string to encrypt (mutually exclusive with plaintext_base64)",
+                    },
+                    "plaintext_base64": {
+                        "type": "string",
+                        "description": "Base64-encoded binary data to encrypt (mutually exclusive with plaintext)",
+                    },
+                    "recipient_classical_public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded raw 32-byte X25519 public key",
+                    },
+                    "recipient_pqc_public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-KEM-768 public key",
+                    },
+                },
+                "required": ["recipient_classical_public_key", "recipient_pqc_public_key"],
+            },
+        ),
+        Tool(
+            name="pqc_hybrid_open",
+            description="Decrypt a hybrid sealed envelope using both secret keys.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "envelope": {
+                        "type": "object",
+                        "description": "Sealed envelope from pqc_hybrid_seal",
+                    },
+                    "classical_secret_key": {
+                        "type": "string",
+                        "description": "Base64-encoded raw 32-byte X25519 secret key",
+                    },
+                    "pqc_secret_key": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-KEM-768 secret key",
+                    },
+                },
+                "required": ["envelope", "classical_secret_key", "pqc_secret_key"],
             },
         ),
     ]
@@ -480,6 +596,124 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 ),
             }
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "pqc_hybrid_keygen":
+            if not HAS_HYBRID:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "error": "Hybrid dependencies unavailable or failed to import. Install liboqs-python and cryptography>=42.0.0."
+                            },
+                            indent=2,
+                        ),
+                    )
+                ]
+            result = hybrid_keygen()
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name in ("pqc_hybrid_encap", "pqc_hybrid_decap", "pqc_hybrid_seal", "pqc_hybrid_open"):
+            if not HAS_HYBRID:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "error": "Hybrid dependencies unavailable or failed to import. Install liboqs-python and cryptography>=42.0.0."
+                            },
+                            indent=2,
+                        ),
+                    )
+                ]
+            import binascii
+
+            try:
+                if name == "pqc_hybrid_encap":
+                    result = hybrid_encap(
+                        base64.b64decode(arguments["classical_public_key"], validate=True),
+                        base64.b64decode(arguments["pqc_public_key"], validate=True),
+                    )
+                    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+                elif name == "pqc_hybrid_decap":
+                    result = hybrid_decap(
+                        base64.b64decode(arguments["classical_secret_key"], validate=True),
+                        base64.b64decode(arguments["pqc_secret_key"], validate=True),
+                        base64.b64decode(arguments["x25519_ephemeral_public_key"], validate=True),
+                        base64.b64decode(arguments["pqc_ciphertext"], validate=True),
+                    )
+                    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+                elif name == "pqc_hybrid_seal":
+                    if "plaintext" in arguments and "plaintext_base64" in arguments:
+                        return [
+                            TextContent(
+                                type="text",
+                                text=json.dumps(
+                                    {
+                                        "error": "Provide exactly one of plaintext or plaintext_base64, not both"
+                                    },
+                                    indent=2,
+                                ),
+                            )
+                        ]
+                    if "plaintext" in arguments:
+                        pt_bytes = arguments["plaintext"].encode("utf-8")
+                    elif "plaintext_base64" in arguments:
+                        pt_bytes = base64.b64decode(arguments["plaintext_base64"], validate=True)
+                    else:
+                        return [
+                            TextContent(
+                                type="text",
+                                text=json.dumps(
+                                    {"error": "Provide plaintext or plaintext_base64"}, indent=2
+                                ),
+                            )
+                        ]
+                    envelope = hybrid_seal(
+                        pt_bytes,
+                        base64.b64decode(
+                            arguments["recipient_classical_public_key"], validate=True
+                        ),
+                        base64.b64decode(arguments["recipient_pqc_public_key"], validate=True),
+                    )
+                    return [
+                        TextContent(type="text", text=json.dumps({"envelope": envelope}, indent=2))
+                    ]
+
+                else:  # name == "pqc_hybrid_open"
+                    result = hybrid_open(
+                        arguments["envelope"],
+                        base64.b64decode(arguments["classical_secret_key"], validate=True),
+                        base64.b64decode(arguments["pqc_secret_key"], validate=True),
+                    )
+                    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+            except binascii.Error as e:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"error": f"Invalid base64 input: {e}"}, indent=2),
+                    )
+                ]
+            except ValueError as e:
+                return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+            except Exception as e:
+                # Catches cryptography.exceptions.InvalidTag on decryption failure
+                if type(e).__name__ == "InvalidTag":
+                    return [
+                        TextContent(
+                            type="text",
+                            text=json.dumps(
+                                {
+                                    "error": "Decryption failed: ciphertext, key, or envelope metadata is invalid"
+                                },
+                                indent=2,
+                            ),
+                        )
+                    ]
+                raise
 
         else:
             return [

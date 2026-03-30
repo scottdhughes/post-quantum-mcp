@@ -16,6 +16,11 @@ EXPECTED_TOOLS = [
     "pqc_verify",
     "pqc_hash",
     "pqc_security_analysis",
+    "pqc_hybrid_keygen",
+    "pqc_hybrid_encap",
+    "pqc_hybrid_decap",
+    "pqc_hybrid_seal",
+    "pqc_hybrid_open",
 ]
 
 
@@ -96,3 +101,42 @@ async def test_hash_different_inputs(call_tool):
     r1 = await call_tool("pqc_hash", {"message": "aaa"})
     r2 = await call_tool("pqc_hash", {"message": "bbb"})
     assert r1["digest_hex"] != r2["digest_hex"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_open_wrong_key_returns_structured_error(call_tool):
+    """MCP handler should return structured JSON error, not leak an exception."""
+    k1_result = await call_tool("pqc_hybrid_keygen", {})
+    k2_result = await call_tool("pqc_hybrid_keygen", {})
+    seal_result = await call_tool(
+        "pqc_hybrid_seal",
+        {
+            "plaintext": "secret message",
+            "recipient_classical_public_key": k1_result["classical"]["public_key"],
+            "recipient_pqc_public_key": k1_result["pqc"]["public_key"],
+        },
+    )
+    open_result = await call_tool(
+        "pqc_hybrid_open",
+        {
+            "envelope": seal_result["envelope"],
+            "classical_secret_key": k2_result["classical"]["secret_key"],
+            "pqc_secret_key": k2_result["pqc"]["secret_key"],
+        },
+    )
+    assert "error" in open_result
+    assert "Decryption failed" in open_result["error"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_encap_malformed_base64_returns_structured_error(call_tool):
+    """MCP handler should return structured JSON error for invalid base64."""
+    result = await call_tool(
+        "pqc_hybrid_encap",
+        {
+            "classical_public_key": "not!valid@base64###",
+            "pqc_public_key": "also!bad###",
+        },
+    )
+    assert "error" in result
+    assert "Invalid base64" in result["error"]
