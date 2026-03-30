@@ -61,7 +61,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build
-          git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+          git clone --depth 1 --branch 0.15.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
           cd /tmp/liboqs && mkdir build && cd build
           cmake -GNinja -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local ..
           ninja && sudo ninja install
@@ -71,7 +71,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install cmake ninja
-          git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+          git clone --depth 1 --branch 0.15.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
           cd /tmp/liboqs && mkdir build && cd build
           cmake -GNinja -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local ..
           ninja && sudo ninja install
@@ -103,12 +103,20 @@ Change the dependencies section in `pyproject.toml`:
 
 ```toml
 dependencies = [
-    "mcp>=1.0.0,<2.0.0",
+    "mcp>=1.6.0,<2.0.0",
     "liboqs-python>=0.10.0",
 ]
 ```
 
-This adds an upper bound on `mcp` to avoid breaking changes from a hypothetical 2.0. `liboqs-python` stays with `>=0.10.0` since the API has been stable.
+Raises `mcp` floor to 1.6.0 (earliest version with stable tool/stdio APIs we rely on) and adds an upper bound. `liboqs-python` stays with `>=0.10.0` since the API has been stable across 0.10-0.14.
+
+- [ ] **Step 2: Generate constraints file**
+
+```bash
+pip freeze --exclude-editable > constraints.txt
+```
+
+This captures the exact versions tested. Commit alongside pyproject.toml so CI and contributors can reproduce.
 
 ### Task 3: Add liboqs research-use warning to README
 
@@ -295,33 +303,28 @@ Create `tests/test_hybrid.py`:
 """Tests for hybrid X25519 + ML-KEM-768 key exchange.
 
 Requires both liboqs and cryptography to be installed.
+Module import errors fail loudly — no silent skips.
 """
 
 import base64
+import binascii
 import hashlib
 import pytest
 
-try:
-    from pqc_mcp_server.hybrid import (
-        SUITE,
-        COMBINER_LABEL,
-        _validate_x25519_key,
-        _check_x25519_shared_secret,
-        _kem_combine,
-        _build_aad,
-        _derive_aead_key_and_nonce,
-    )
-    HAS_HYBRID_DEPS = True
-except ImportError:
-    HAS_HYBRID_DEPS = False
+oqs = pytest.importorskip("oqs", reason="liboqs-python not installed")
+pytest.importorskip("cryptography", reason="cryptography not installed")
 
-requires_hybrid = pytest.mark.skipif(
-    not HAS_HYBRID_DEPS,
-    reason="cryptography and/or liboqs not installed",
+from pqc_mcp_server.hybrid import (
+    SUITE,
+    COMBINER_LABEL,
+    _validate_x25519_key,
+    _check_x25519_shared_secret,
+    _kem_combine,
+    _build_aad,
+    _derive_aead_key_and_nonce,
 )
 
 
-@requires_hybrid
 class TestValidation:
     def test_valid_x25519_key(self):
         _validate_x25519_key(b"\x01" * 32, "test key")
@@ -388,7 +391,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import oqs
 
 SUITE = "mlkem768-x25519-sha3-256"
-COMBINER_LABEL = b"pqc-mcp-v1-mlkem768-x25519-sha3-256"
+COMBINER_LABEL = b"\x5c\x2e\x2f\x2f\x5e\x5c"  # \.//^\ — LAMPS id-MLKEM768-X25519-SHA3-256
 _HKDF_INFO_PREFIX = b"pqc-mcp-v1|mlkem768-x25519-sha3-256|"
 
 
@@ -470,7 +473,6 @@ Combiner follows LAMPS id-MLKEM768-X25519-SHA3-256."
 Append to `tests/test_hybrid.py`:
 
 ```python
-@requires_hybrid
 class TestCombiner:
     def test_combiner_output_is_32_bytes(self):
         result = _kem_combine(b"\x01" * 32, b"\x02" * 32, b"\x03" * 32, b"\x04" * 32)
@@ -487,7 +489,7 @@ class TestCombiner:
         epk = b"\xcc" * 32
         pk = b"\xdd" * 32
         expected_input = ss_mlkem + ss_x25519 + epk + pk + COMBINER_LABEL
-        assert len(expected_input) == 164
+        assert len(expected_input) == 134  # 32+32+32+32+6
         expected = hashlib.sha3_256(expected_input).digest()
         assert _kem_combine(ss_mlkem, ss_x25519, epk, pk) == expected
 
@@ -496,12 +498,12 @@ class TestCombiner:
         r2 = _kem_combine(b"\x05" * 32, b"\x02" * 32, b"\x03" * 32, b"\x04" * 32)
         assert r1 != r2
 
-    def test_combiner_label_is_correct(self):
-        assert COMBINER_LABEL == b"pqc-mcp-v1-mlkem768-x25519-sha3-256"
-        assert len(COMBINER_LABEL) == 36
+    def test_combiner_label_is_lamps_draft(self):
+        """Label must be the exact LAMPS id-MLKEM768-X25519-SHA3-256 bytes."""
+        assert COMBINER_LABEL == b"\x5c\x2e\x2f\x2f\x5e\x5c"
+        assert len(COMBINER_LABEL) == 6
 
 
-@requires_hybrid
 class TestHKDF:
     def test_info_string_bytes(self):
         assert _HKDF_INFO_PREFIX + b"aes-256-gcm-key" == (
@@ -528,7 +530,6 @@ class TestHKDF:
         assert aes_key[:12] != nonce
 
 
-@requires_hybrid
 class TestAAD:
     def test_aad_construction(self):
         epk = b"\xaa" * 32
@@ -569,7 +570,6 @@ Append to `tests/test_hybrid.py`:
 ```python
 from pqc_mcp_server.hybrid import hybrid_keygen
 
-@requires_hybrid
 class TestKeygen:
     def test_keygen_returns_suite(self):
         result = hybrid_keygen()
@@ -660,7 +660,6 @@ Append to `tests/test_hybrid.py`:
 ```python
 from pqc_mcp_server.hybrid import hybrid_encap, hybrid_decap
 
-@requires_hybrid
 class TestEncapDecap:
     def test_encap_decap_roundtrip(self):
         keys = hybrid_keygen()
@@ -801,7 +800,6 @@ Append to `tests/test_hybrid.py`:
 ```python
 from pqc_mcp_server.hybrid import hybrid_seal, hybrid_open
 
-@requires_hybrid
 class TestSealOpen:
     def test_seal_open_string_roundtrip(self):
         keys = hybrid_keygen()
@@ -855,6 +853,7 @@ class TestSealOpen:
         assert base64.b64decode(result["plaintext_base64"]) == non_utf8
 
     def test_wrong_key_open_fails(self):
+        from cryptography.exceptions import InvalidTag
         k1 = hybrid_keygen()
         k2 = hybrid_keygen()
         envelope = hybrid_seal(
@@ -862,7 +861,7 @@ class TestSealOpen:
             base64.b64decode(k1["classical"]["public_key"]),
             base64.b64decode(k1["pqc"]["public_key"]),
         )
-        with pytest.raises(Exception):
+        with pytest.raises(InvalidTag):
             hybrid_open(
                 envelope,
                 base64.b64decode(k2["classical"]["secret_key"]),
@@ -870,6 +869,7 @@ class TestSealOpen:
             )
 
     def test_tampered_ciphertext_fails(self):
+        from cryptography.exceptions import InvalidTag
         keys = hybrid_keygen()
         envelope = hybrid_seal(
             b"data",
@@ -879,7 +879,7 @@ class TestSealOpen:
         ct = bytearray(base64.b64decode(envelope["ciphertext"]))
         ct[0] ^= 0xFF
         envelope["ciphertext"] = base64.b64encode(bytes(ct)).decode()
-        with pytest.raises(Exception):
+        with pytest.raises(InvalidTag):
             hybrid_open(
                 envelope,
                 base64.b64decode(keys["classical"]["secret_key"]),
@@ -887,6 +887,8 @@ class TestSealOpen:
             )
 
     def test_tampered_pqc_ciphertext_fails(self):
+        """Tampered ML-KEM ciphertext changes the AAD, causing GCM tag mismatch."""
+        from cryptography.exceptions import InvalidTag
         keys = hybrid_keygen()
         envelope = hybrid_seal(
             b"data",
@@ -896,7 +898,7 @@ class TestSealOpen:
         ct = bytearray(base64.b64decode(envelope["pqc_ciphertext"]))
         ct[0] ^= 0xFF
         envelope["pqc_ciphertext"] = base64.b64encode(bytes(ct)).decode()
-        with pytest.raises(Exception):
+        with pytest.raises(InvalidTag):
             hybrid_open(
                 envelope,
                 base64.b64decode(keys["classical"]["secret_key"]),
@@ -904,6 +906,8 @@ class TestSealOpen:
             )
 
     def test_tampered_epk_fails(self):
+        """Tampered ephemeral key changes both ECDH shared secret and AAD."""
+        from cryptography.exceptions import InvalidTag
         keys = hybrid_keygen()
         envelope = hybrid_seal(
             b"data",
@@ -913,7 +917,7 @@ class TestSealOpen:
         epk = bytearray(base64.b64decode(envelope["x25519_ephemeral_public_key"]))
         epk[0] ^= 0xFF
         envelope["x25519_ephemeral_public_key"] = base64.b64encode(bytes(epk)).decode()
-        with pytest.raises(Exception):
+        with pytest.raises(InvalidTag):
             hybrid_open(
                 envelope,
                 base64.b64decode(keys["classical"]["secret_key"]),
@@ -980,11 +984,17 @@ def hybrid_open(
     pqc_sk: bytes,
 ) -> dict[str, Any]:
     """Decrypt a sealed envelope."""
+    # Validate transmitted header fields before any crypto
+    if envelope.get("version") != "pqc-mcp-v1":
+        raise ValueError(f"Unsupported envelope version: {envelope.get('version')}")
+    if envelope.get("suite") != SUITE:
+        raise ValueError(f"Unsupported envelope suite: {envelope.get('suite')}")
+
     _validate_x25519_key(classical_sk, "classical_secret_key")
 
-    epk_bytes = base64.b64decode(envelope["x25519_ephemeral_public_key"])
-    pqc_ct = base64.b64decode(envelope["pqc_ciphertext"])
-    ciphertext = base64.b64decode(envelope["ciphertext"])
+    epk_bytes = base64.b64decode(envelope["x25519_ephemeral_public_key"], validate=True)
+    pqc_ct = base64.b64decode(envelope["pqc_ciphertext"], validate=True)
+    ciphertext = base64.b64decode(envelope["ciphertext"], validate=True)
 
     _validate_x25519_key(epk_bytes, "x25519_ephemeral_public_key")
 
@@ -1147,8 +1157,8 @@ In the `call_tool` function, add handlers before the `else: Unknown tool` branch
             if not HAS_HYBRID:
                 return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed"}, indent=2))]
             result = hybrid_encap(
-                base64.b64decode(arguments["classical_public_key"]),
-                base64.b64decode(arguments["pqc_public_key"]),
+                base64.b64decode(arguments["classical_public_key"], validate=True),
+                base64.b64decode(arguments["pqc_public_key"], validate=True),
             )
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
@@ -1156,10 +1166,10 @@ In the `call_tool` function, add handlers before the `else: Unknown tool` branch
             if not HAS_HYBRID:
                 return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed"}, indent=2))]
             result = hybrid_decap(
-                base64.b64decode(arguments["classical_secret_key"]),
-                base64.b64decode(arguments["pqc_secret_key"]),
-                base64.b64decode(arguments["x25519_ephemeral_public_key"]),
-                base64.b64decode(arguments["pqc_ciphertext"]),
+                base64.b64decode(arguments["classical_secret_key"], validate=True),
+                base64.b64decode(arguments["pqc_secret_key"], validate=True),
+                base64.b64decode(arguments["x25519_ephemeral_public_key"], validate=True),
+                base64.b64decode(arguments["pqc_ciphertext"], validate=True),
             )
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
@@ -1171,13 +1181,13 @@ In the `call_tool` function, add handlers before the `else: Unknown tool` branch
             if "plaintext" in arguments:
                 pt_bytes = arguments["plaintext"].encode("utf-8")
             elif "plaintext_base64" in arguments:
-                pt_bytes = base64.b64decode(arguments["plaintext_base64"])
+                pt_bytes = base64.b64decode(arguments["plaintext_base64"], validate=True)
             else:
                 return [TextContent(type="text", text=json.dumps({"error": "Provide plaintext or plaintext_base64"}, indent=2))]
             envelope = hybrid_seal(
                 pt_bytes,
-                base64.b64decode(arguments["recipient_classical_public_key"]),
-                base64.b64decode(arguments["recipient_pqc_public_key"]),
+                base64.b64decode(arguments["recipient_classical_public_key"], validate=True),
+                base64.b64decode(arguments["recipient_pqc_public_key"], validate=True),
             )
             return [TextContent(type="text", text=json.dumps({"envelope": envelope}, indent=2))]
 
@@ -1186,8 +1196,8 @@ In the `call_tool` function, add handlers before the `else: Unknown tool` branch
                 return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed"}, indent=2))]
             result = hybrid_open(
                 arguments["envelope"],
-                base64.b64decode(arguments["classical_secret_key"]),
-                base64.b64decode(arguments["pqc_secret_key"]),
+                base64.b64decode(arguments["classical_secret_key"], validate=True),
+                base64.b64decode(arguments["pqc_secret_key"], validate=True),
             )
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 ```
