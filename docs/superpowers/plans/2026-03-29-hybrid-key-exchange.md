@@ -40,9 +40,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -c constraints.txt ".[dev]"
-      - run: black --check pqc_mcp_server/ tests/
-      - run: mypy pqc_mcp_server/
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --all-extras
+      - run: uv run black --check pqc_mcp_server/ tests/
+      - run: uv run mypy pqc_mcp_server/
 
   test:
     runs-on: ${{ matrix.os }}
@@ -76,16 +77,15 @@ jobs:
           cmake -GNinja -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local ..
           ninja && sudo ninja install
 
+      - uses: astral-sh/setup-uv@v4
       - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -c constraints.txt ".[dev]"
+        run: uv sync --all-extras
 
       - name: Run tests
         env:
           LD_LIBRARY_PATH: /usr/local/lib
           DYLD_LIBRARY_PATH: /usr/local/lib
-        run: pytest tests/ -v --tb=short
+        run: uv run pytest tests/ -v --tb=short
 ```
 
 - [ ] **Step 2: Verify the YAML is valid**
@@ -110,13 +110,13 @@ dependencies = [
 
 Raises `mcp` floor to 1.6.0 (earliest version with stable tool/stdio APIs we rely on) and adds an upper bound. `liboqs-python` stays with `>=0.10.0` since the API has been stable across 0.10-0.14.
 
-- [ ] **Step 2: Generate constraints file**
+- [ ] **Step 2: Generate uv.lock**
 
 ```bash
-pip freeze --exclude-editable > constraints.txt
+uv lock
 ```
 
-This captures the exact versions tested. Commit alongside pyproject.toml so CI and contributors can reproduce.
+`uv.lock` is a universal, cross-platform lockfile. Commit alongside pyproject.toml so CI and contributors can reproduce the exact tested dependency set across the Python 3.10-3.13 × Linux/macOS matrix.
 
 ### Task 3: Add liboqs research-use warning to README
 
@@ -139,7 +139,7 @@ Insert after line 7 (the MCP badge), before the description paragraph:
 - [ ] **Step 1: Stage all PR 1 files**
 
 ```bash
-git add pqc_mcp_server/__init__.py pyproject.toml run.sh CHANGELOG.md tests/ .github/ README.md constraints.txt
+git add pqc_mcp_server/__init__.py pyproject.toml run.sh CHANGELOG.md tests/ .github/ README.md uv.lock
 ```
 
 - [ ] **Step 2: Commit**
@@ -283,22 +283,21 @@ dependencies = [
 ]
 ```
 
-- [ ] **Step 2: Regenerate constraints.txt**
+- [ ] **Step 2: Regenerate uv.lock**
 
 ```bash
-pip install -e ".[dev]"
-pip freeze --exclude-editable > constraints.txt
+uv lock
 ```
 
-This updates the frozen dependency set to include `cryptography` and its transitive deps.
+`uv.lock` is a universal, cross-platform lockfile that covers the full Python 3.10-3.13 × Linux/macOS matrix. A single `pip freeze` output is not portable across that matrix.
 
 - [ ] **Step 3: Commit both together**
 
 ```bash
-git add pyproject.toml constraints.txt
+git add pyproject.toml uv.lock
 git commit -m "build: add cryptography>=42.0.0 for hybrid key exchange
 
-Update constraints.txt to include cryptography and transitive deps."
+Regenerate uv.lock for cross-platform reproducibility."
 ```
 
 ### Task 9: Implement hybrid.py — validation helpers and combiner
@@ -1278,6 +1277,12 @@ In the `call_tool` function, add handlers before the `else: Unknown tool` branch
                 return [TextContent(type="text", text=json.dumps({"error": f"Invalid base64 input: {e}"}, indent=2))]
             except ValueError as e:
                 return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+            except Exception as e:
+                # Catches cryptography.exceptions.InvalidTag on decryption failure
+                # without importing it at module level (which would fail if cryptography is missing)
+                if type(e).__name__ == "InvalidTag":
+                    return [TextContent(type="text", text=json.dumps({"error": "Decryption failed: ciphertext, key, or envelope metadata is invalid"}, indent=2))]
+                raise
 ```
 
 - [ ] **Step 4: Update test_server.py EXPECTED_TOOLS**
