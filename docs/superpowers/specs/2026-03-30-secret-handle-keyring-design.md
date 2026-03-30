@@ -1,7 +1,7 @@
 # Secret-Handle Keyring — Design Spec
 
 **Date:** 2026-03-30
-**Status:** Revised (v2)
+**Status:** Revised (v3)
 **Author:** Scott Hughes + Claude
 
 ## Goal
@@ -10,7 +10,7 @@ Add opt-in opaque secret-handle mode to the PQC MCP server. When a caller genera
 
 **Scope disclaimer:** This remains research/prototyping tooling. The handle system protects against output leakage, not against a compromised server process. liboqs is not recommended for production use.
 
-**Handle lifetime:** Handles are process-local and lost on server restart. There is no persistent storage.
+**Handle lifetime:** Handles are process-local and lost on server restart. There is no persistent storage. Handle names must be unique within the running server process — they are process-global, not per-session or per-caller.
 
 ## Design Decisions (Resolved)
 
@@ -19,10 +19,11 @@ Add opt-in opaque secret-handle mode to the PQC MCP server. When a caller genera
 3. **Output-only protection.** Secrets are plain bytes in the server process. The threat model is "secrets in LLM context and logs," not "secrets in the server process."
 4. **Storage method distinguishes redaction.** Keys stored via `store_as` (handle mode) → `pqc_key_store_load` returns public material + metadata only. Keys stored via `pqc_key_store_save` (explicit save) → returns full key_data as before.
 5. **Conflict is an error.** If both a store-name parameter and raw base64 key parameters are provided for the same key role, the tool returns a structured error. No silent precedence. This prevents caller mistakes in crypto tooling.
-6. **`store_as` fails on collision** unless `overwrite: true` is passed. Accidentally replacing an identity key is worse than failing loudly. Returns `{"error": "Key 'name' already exists in store. Pass overwrite: true to replace."}`.
+6. **`store_as` fails on collision** unless `overwrite: true` is passed. Accidentally replacing an identity key is worse than failing loudly. Returns `{"error": "Key 'name' already exists in store. Pass overwrite: true to replace."}`. Overwrite replaces the entire entry including redaction mode: `store_as(overwrite=true)` replacing an explicit-save entry makes the new entry handle-redacted on load; `pqc_key_store_save` replacing a handle entry makes the new entry load as full data.
 7. **Generic PQC tools also support `key_store_name`.** `pqc_sign`, `pqc_verify`, `pqc_encapsulate`, `pqc_decapsulate` all accept `key_store_name` to resolve flat keypairs. This closes the hole where `store_as` on `pqc_generate_keypair` would produce a handle that no downstream tool could consume.
 8. **Strict type validation.** Resolution checks `type` and `algorithm` fields, not just shape. `sender_key_store_name` on `hybrid_auth_seal` rejects flat KEM keypairs (must be signature type). Hybrid tool `key_store_name` rejects flat keypairs (must be hybrid bundle).
-9. **Crypto layer untouched.** `hybrid.py` still only sees raw bytes. Resolution happens in the handler layer.
+9. **Algorithm comparison uses canonical forms.** The project accepts legacy aliases (Kyber/Dilithium/SPHINCS+ alongside ML-KEM/ML-DSA/SLH-DSA). When checking algorithm mismatch between `arguments["algorithm"]` and a stored key's algorithm, both are normalized through liboqs before comparison. Raw string comparison would wrongly reject valid aliases.
+10. **Crypto layer untouched.** `hybrid.py` still only sees raw bytes. Resolution happens in the handler layer.
 
 ## Modified Tools
 
@@ -136,6 +137,20 @@ Entry with `stored_as_handle: true` returns public material + metadata:
 
 No secret keys. Includes name, type, fingerprints — everything needed to use the handle downstream.
 
+For a flat signature keypair handle:
+```json
+{
+  "name": "alice-signing",
+  "stored_as_handle": true,
+  "type": "Signature",
+  "algorithm": "ML-DSA-65",
+  "public_key": "<base64>",
+  "public_key_size": 1952,
+  "fingerprint": "<hex>",
+  "fingerprint_algorithm": "SHA3-256"
+}
+```
+
 Entry with `stored_as_handle: false` (or absent) returns full key_data as before.
 
 ### `pqc_key_store_list` metadata
@@ -183,7 +198,7 @@ Each entry in the list includes `stored_as_handle` flag:
   - `key_store_name` on `pqc_sign`/`pqc_verify` requires `type == "Signature"`
   - `key_store_name` on `pqc_encapsulate`/`pqc_decapsulate` requires `type == "KEM"`
   - `sender_key_store_name` with `type == "KEM"` → error: `"Key 'name' is a KEM keypair, not a signing keypair"`
-- Algorithm mismatch (generic PQC tools): if `arguments["algorithm"]` differs from `key_data["algorithm"]` → error: `"Algorithm mismatch: requested 'X' but key 'name' is 'Y'"`
+- Algorithm mismatch (generic PQC tools): both requested and stored algorithm names are normalized through liboqs before comparison. If canonical forms differ → error: `"Algorithm mismatch: requested 'X' but key 'name' is 'Y'"`
 
 ## Resolution Logic
 
@@ -347,5 +362,13 @@ def _require_flat_kem(keys: dict, name: str) -> None:
 34. Store-name error returns structured JSON error
 35. Conflict error returns structured JSON error
 
+### Delete tests
+36. `pqc_key_store_delete` on handle entry succeeds and clears the entry
+37. After deleting a handle entry, `key_store_name` referencing it returns error
+
+### Algorithm alias tests
+38. `pqc_sign` with stored ML-DSA-65 key + `algorithm: "Dilithium3"` alias (if accepted by liboqs) does not error on mismatch
+39. `pqc_encapsulate` with stored ML-KEM-768 key + `algorithm: "Kyber768"` alias (if accepted by liboqs) does not error on mismatch
+
 ### Backward compatibility
-36. All existing 129 tests pass unchanged (no store params = old behavior)
+40. All existing 129 tests pass unchanged (no store params = old behavior)
