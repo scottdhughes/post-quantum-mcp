@@ -376,7 +376,7 @@ post-quantum-mcp/
 │   ├── __init__.py      # MCP server + tool handlers
 │   ├── __main__.py      # Entry point
 │   └── hybrid.py        # Hybrid X25519 + ML-KEM-768 crypto + authenticated envelopes (ML-DSA-65)
-├── tests/               # 110 tests (KEM, signatures, hashing, hybrid, authenticated envelopes, fingerprints, MCP handlers)
+├── tests/               # 114 tests (KEM, signatures, hashing, hybrid, authenticated envelopes, fingerprints, MCP handlers, stdio integration)
 ├── .github/workflows/   # CI pipeline (Python 3.10-3.13 × Ubuntu/macOS)
 ├── run.sh               # Wrapper script (sets library paths, finds venv)
 ├── pyproject.toml       # Package configuration
