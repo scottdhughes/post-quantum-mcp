@@ -353,3 +353,173 @@ class TestFullRoundtripViaStore:
         )
         assert result["plaintext"] == "auth store roundtrip"
         assert result["authenticated"] is True
+
+
+class TestGenerateKeypairStoreAs:
+    def test_store_as_sig_returns_no_secret(self):
+        result = handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "gen-sig"})
+        assert result["handle"] == "gen-sig"
+        assert "secret_key" not in result
+        assert "secret_key_size" not in result
+        assert "fingerprint" in result
+        assert result["fingerprint_algorithm"] == "SHA3-256"
+
+    def test_store_as_kem_returns_no_secret(self):
+        result = handle_generate_keypair({"algorithm": "ML-KEM-768", "store_as": "gen-kem"})
+        assert result["handle"] == "gen-kem"
+        assert "secret_key" not in result
+        assert "fingerprint" in result
+
+    def test_store_as_collision_fails(self):
+        handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "gen-col"})
+        with pytest.raises(ValueError, match="already exists"):
+            handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "gen-col"})
+
+    def test_no_store_as_returns_secrets(self):
+        result = handle_generate_keypair({"algorithm": "ML-DSA-65"})
+        assert "secret_key" in result
+
+
+class TestGenericPQCResolution:
+    def test_sign_with_store_name(self):
+        from pqc_mcp_server.handlers_pqc import handle_sign
+
+        handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "signer"})
+        result = handle_sign(
+            {
+                "algorithm": "ML-DSA-65",
+                "key_store_name": "signer",
+                "message": "hello",
+            }
+        )
+        assert "signature" in result
+
+    def test_verify_with_store_name(self):
+        from pqc_mcp_server.handlers_pqc import handle_sign, handle_verify
+
+        handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "sv"})
+        signed = handle_sign(
+            {
+                "algorithm": "ML-DSA-65",
+                "key_store_name": "sv",
+                "message": "hello",
+            }
+        )
+        verified = handle_verify(
+            {
+                "algorithm": "ML-DSA-65",
+                "key_store_name": "sv",
+                "message": "hello",
+                "signature": signed["signature"],
+            }
+        )
+        assert verified["valid"] is True
+
+    def test_encapsulate_with_store_name(self):
+        from pqc_mcp_server.handlers_pqc import handle_encapsulate
+
+        handle_generate_keypair({"algorithm": "ML-KEM-768", "store_as": "kem-enc"})
+        result = handle_encapsulate(
+            {
+                "algorithm": "ML-KEM-768",
+                "key_store_name": "kem-enc",
+            }
+        )
+        assert "shared_secret" in result
+
+    def test_decapsulate_with_store_name(self):
+        from pqc_mcp_server.handlers_pqc import handle_encapsulate, handle_decapsulate
+
+        keys = handle_generate_keypair({"algorithm": "ML-KEM-768"})
+        store_from_keygen("kem-dec", keys, overwrite=True)
+        encap = handle_encapsulate(
+            {
+                "algorithm": "ML-KEM-768",
+                "key_store_name": "kem-dec",
+            }
+        )
+        decap = handle_decapsulate(
+            {
+                "algorithm": "ML-KEM-768",
+                "key_store_name": "kem-dec",
+                "ciphertext": encap["ciphertext"],
+            }
+        )
+        assert decap["shared_secret"] == encap["shared_secret"]
+
+    def test_sign_verify_roundtrip_via_store(self):
+        from pqc_mcp_server.handlers_pqc import handle_sign, handle_verify
+
+        handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "svrt"})
+        signed = handle_sign(
+            {
+                "algorithm": "ML-DSA-65",
+                "key_store_name": "svrt",
+                "message": "roundtrip",
+            }
+        )
+        verified = handle_verify(
+            {
+                "algorithm": "ML-DSA-65",
+                "key_store_name": "svrt",
+                "message": "roundtrip",
+                "signature": signed["signature"],
+            }
+        )
+        assert verified["valid"] is True
+
+
+class TestGenericPQCConflicts:
+    def test_sign_conflict_store_and_raw(self):
+        from pqc_mcp_server.handlers_pqc import handle_sign
+
+        handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "sc"})
+        with pytest.raises(ValueError, match="not both"):
+            handle_sign(
+                {
+                    "algorithm": "ML-DSA-65",
+                    "key_store_name": "sc",
+                    "secret_key": "AAAA",
+                    "message": "x",
+                }
+            )
+
+
+class TestGenericPQCTypeMismatch:
+    def test_kem_key_on_sign_fails(self):
+        from pqc_mcp_server.handlers_pqc import handle_sign
+
+        handle_generate_keypair({"algorithm": "ML-KEM-768", "store_as": "kem-for-sign"})
+        with pytest.raises(ValueError, match="KEM keypair, not a signing"):
+            handle_sign(
+                {
+                    "algorithm": "ML-KEM-768",
+                    "key_store_name": "kem-for-sign",
+                    "message": "x",
+                }
+            )
+
+    def test_sig_key_on_encapsulate_fails(self):
+        from pqc_mcp_server.handlers_pqc import handle_encapsulate
+
+        handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "sig-for-enc"})
+        with pytest.raises(ValueError, match="Signature keypair, not a KEM"):
+            handle_encapsulate(
+                {
+                    "algorithm": "ML-DSA-65",
+                    "key_store_name": "sig-for-enc",
+                }
+            )
+
+    def test_algorithm_mismatch_fails(self):
+        from pqc_mcp_server.handlers_pqc import handle_sign
+
+        handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "alg-mis"})
+        with pytest.raises(ValueError, match="Algorithm mismatch"):
+            handle_sign(
+                {
+                    "algorithm": "ML-DSA-44",
+                    "key_store_name": "alg-mis",
+                    "message": "x",
+                }
+            )

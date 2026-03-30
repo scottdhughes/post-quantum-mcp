@@ -76,7 +76,7 @@ def handle_generate_keypair(arguments: dict[str, Any]) -> dict[str, Any]:
         kem = oqs.KeyEncapsulation(alg)
         public_key = kem.generate_keypair()
         secret_key = kem.export_secret_key()
-        return {
+        result: dict[str, Any] = {
             "algorithm": alg,
             "type": "KEM",
             "public_key": base64.b64encode(public_key).decode(),
@@ -85,24 +85,103 @@ def handle_generate_keypair(arguments: dict[str, Any]) -> dict[str, Any]:
             "secret_key_size": len(secret_key),
         }
     except MechanismNotSupportedError:
-        pass
+        sig = oqs.Signature(alg)
+        public_key = sig.generate_keypair()
+        secret_key = sig.export_secret_key()
+        result = {
+            "algorithm": alg,
+            "type": "Signature",
+            "public_key": base64.b64encode(public_key).decode(),
+            "secret_key": base64.b64encode(secret_key).decode(),
+            "public_key_size": len(public_key),
+            "secret_key_size": len(secret_key),
+        }
 
-    sig = oqs.Signature(alg)
-    public_key = sig.generate_keypair()
-    secret_key = sig.export_secret_key()
-    return {
-        "algorithm": alg,
-        "type": "Signature",
-        "public_key": base64.b64encode(public_key).decode(),
-        "secret_key": base64.b64encode(secret_key).decode(),
-        "public_key_size": len(public_key),
-        "secret_key_size": len(secret_key),
-    }
+    store_name = arguments.get("store_as")
+    if store_name:
+        from pqc_mcp_server.key_store import store_from_keygen
+        import hashlib as _hashlib
+
+        overwrite = arguments.get("overwrite", False)
+        store_from_keygen(store_name, result, overwrite=overwrite)
+        fp = _hashlib.sha3_256(base64.b64decode(result["public_key"])).hexdigest()
+        return {
+            "algorithm": result["algorithm"],
+            "type": result["type"],
+            "handle": store_name,
+            "public_key": result["public_key"],
+            "public_key_size": result["public_key_size"],
+            "fingerprint": fp,
+            "fingerprint_algorithm": "SHA3-256",
+        }
+    return result
+
+
+def _resolve_flat_key(
+    arguments: dict[str, Any],
+    key_field: str,
+    expected_type: str,
+) -> bytes | None:
+    """Resolve a flat key from store or return None (use raw args).
+    Checks conflict, type, and algorithm match."""
+    from pqc_mcp_server.key_store import (
+        _resolve_from_store,
+        _require_flat_signature,
+        _require_flat_kem,
+    )
+
+    has_store = "key_store_name" in arguments
+    has_raw = key_field in arguments
+    if has_store and has_raw:
+        raise ValueError("Provide either key_store_name or raw key parameters, not both")
+    if not has_store:
+        return None
+
+    keys = _resolve_from_store(arguments["key_store_name"])
+    name = arguments["key_store_name"]
+
+    if expected_type == "signature":
+        _require_flat_signature(keys, name)
+    elif expected_type == "kem":
+        _require_flat_kem(keys, name)
+
+    # Algorithm mismatch check
+    if "algorithm" in arguments:
+        stored_alg = keys.get("algorithm", "")
+        requested_alg = arguments["algorithm"]
+        if stored_alg != requested_alg:
+            # Try liboqs canonical comparison
+            try:
+                if expected_type == "kem":
+                    k1 = oqs.KeyEncapsulation(stored_alg)
+                    k2 = oqs.KeyEncapsulation(requested_alg)
+                    if k1.details["name"] != k2.details["name"]:
+                        raise ValueError(
+                            f"Algorithm mismatch: requested '{requested_alg}' but key '{name}' is '{stored_alg}'"
+                        )
+                else:
+                    s1 = oqs.Signature(stored_alg)
+                    s2 = oqs.Signature(requested_alg)
+                    if s1.details["name"] != s2.details["name"]:
+                        raise ValueError(
+                            f"Algorithm mismatch: requested '{requested_alg}' but key '{name}' is '{stored_alg}'"
+                        )
+            except ValueError:
+                raise
+            except Exception:
+                raise ValueError(
+                    f"Algorithm mismatch: requested '{requested_alg}' but key '{name}' is '{stored_alg}'"
+                )
+
+    return base64.b64decode(keys[key_field])
 
 
 def handle_encapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
-    public_key = base64.b64decode(arguments["public_key"])
+    resolved_pk = _resolve_flat_key(arguments, "public_key", "kem")
+    public_key = (
+        resolved_pk if resolved_pk is not None else base64.b64decode(arguments["public_key"])
+    )
     kem = oqs.KeyEncapsulation(alg)
     ciphertext, shared_secret = kem.encap_secret(public_key)
     return {
@@ -116,7 +195,10 @@ def handle_encapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_decapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
-    secret_key = base64.b64decode(arguments["secret_key"])
+    resolved_sk = _resolve_flat_key(arguments, "secret_key", "kem")
+    secret_key = (
+        resolved_sk if resolved_sk is not None else base64.b64decode(arguments["secret_key"])
+    )
     ciphertext = base64.b64decode(arguments["ciphertext"])
     kem = oqs.KeyEncapsulation(alg, secret_key)
     shared_secret = kem.decap_secret(ciphertext)
@@ -129,7 +211,10 @@ def handle_decapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_sign(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
-    secret_key = base64.b64decode(arguments["secret_key"])
+    resolved_sk = _resolve_flat_key(arguments, "secret_key", "signature")
+    secret_key = (
+        resolved_sk if resolved_sk is not None else base64.b64decode(arguments["secret_key"])
+    )
     message = arguments["message"].encode("utf-8")
     sig = oqs.Signature(alg, secret_key)
     signature = sig.sign(message)
@@ -143,7 +228,10 @@ def handle_sign(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_verify(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
-    public_key = base64.b64decode(arguments["public_key"])
+    resolved_pk = _resolve_flat_key(arguments, "public_key", "signature")
+    public_key = (
+        resolved_pk if resolved_pk is not None else base64.b64decode(arguments["public_key"])
+    )
     message = arguments["message"].encode("utf-8")
     signature = base64.b64decode(arguments["signature"])
     sig = oqs.Signature(alg)
