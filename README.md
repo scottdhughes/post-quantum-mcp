@@ -15,18 +15,18 @@ Current cryptographic systems (RSA, ECC, ECDSA) will be broken by quantum comput
 
 | Standard | Algorithm | Type | Status |
 |----------|-----------|------|--------|
-| **FIPS 203** | ML-KEM (Kyber) | Key Encapsulation | Finalized 2024 |
-| **FIPS 204** | ML-DSA (Dilithium) | Digital Signature | Finalized 2024 |
-| **FIPS 205** | SLH-DSA (SPHINCS+) | Hash-based Signature | Finalized 2024 |
+| **FIPS 203** | ML-KEM (formerly CRYSTALS-Kyber) | Key Encapsulation | Finalized 2024 |
+| **FIPS 204** | ML-DSA (formerly CRYSTALS-Dilithium) | Digital Signature | Finalized 2024 |
+| **FIPS 205** | SLH-DSA (formerly SPHINCS+) | Hash-based Signature | Finalized 2024 |
 
 This MCP server makes these algorithms accessible to AI agents for research, development, and integration.
 
 ## Features
 
-- **32 Key Encapsulation Mechanisms (KEMs)**: ML-KEM, FrodoKEM, HQC, BIKE, Classic McEliece
-- **221 Signature Algorithms**: ML-DSA, Falcon, SPHINCS+, MAYO, CROSS, UOV
+- **Key Encapsulation Mechanisms (KEMs) available via liboqs**: ML-KEM, FrodoKEM, HQC, BIKE, Classic McEliece
+- **Signature algorithms available via liboqs**: ML-DSA, Falcon, SLH-DSA, MAYO, CROSS, UOV
 - **Full MCP Integration**: Works with Claude Desktop, Claude Code, Cursor, and any MCP client
-- **NIST Standards Compliant**: Implements FIPS 203, 204, and 205 algorithms
+- **Supports NIST-standardized algorithms**: Implements FIPS 203, 204, and 205 algorithms
 - **Security Analysis**: Compare classical vs quantum security levels
 
 ## Quick Start
@@ -156,7 +156,7 @@ Input: { "algorithm": "ML-DSA-65", "public_key": "<base64>", "message": "...", "
 Output: { "valid": true/false }
 ```
 
-### `pqc_hash_to_curve`
+### `pqc_hash`
 Hash a message using quantum-safe hash functions.
 
 ```
@@ -173,6 +173,8 @@ Output: NIST level, classical/quantum security equivalents, Grover/Shor resistan
 ```
 
 ## Supported Algorithms
+
+> **Note:** Legacy algorithm names (Kyber, Dilithium, SPHINCS+) are accepted as aliases for compatibility with older liboqs versions.
 
 ### Key Encapsulation Mechanisms (KEMs)
 
@@ -193,8 +195,8 @@ Output: NIST level, classical/quantum security equivalents, Grover/Shor resistan
 | ML-DSA-87 | 5 | 2,592 B | 4,627 B | High security |
 | Falcon-512 | 1 | 897 B | 653 B | Smallest sigs |
 | Falcon-1024 | 5 | 1,793 B | 1,280 B | Compact |
-| SPHINCS+-SHA2-128f | 1 | 32 B | 17,088 B | Stateless, hash-based |
-| SPHINCS+-SHA2-256f | 5 | 64 B | 49,856 B | Maximum security |
+| SLH-DSA-SHA2-128f (formerly SPHINCS+-SHA2-128f) | 1 | 32 B | 17,088 B | Stateless, hash-based |
+| SLH-DSA-SHA2-256f (formerly SPHINCS+-SHA2-256f) | 5 | 64 B | 49,856 B | Maximum security |
 
 ## Example Usage with Claude
 

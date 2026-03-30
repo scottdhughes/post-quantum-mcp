@@ -191,8 +191,8 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="pqc_hash_to_curve",
-            description="Hash a message to a point suitable for PQC operations (SHA3-256)",
+            name="pqc_hash",
+            description="Compute a quantum-safe hash digest (SHA3-256, SHA3-512, SHAKE128, SHAKE256)",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -208,7 +208,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="pqc_security_analysis",
-            description="Analyze security properties and compare classical vs quantum security levels",
+            description="Educational estimate of security properties: maps NIST levels to classical/quantum equivalents. This is a static lookup, not a formal per-algorithm analysis.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -403,7 +403,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             }
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
-        elif name == "pqc_hash_to_curve":
+        elif name in ("pqc_hash", "pqc_hash_to_curve"):
             message = arguments["message"].encode("utf-8")
             alg = arguments.get("algorithm", "SHA3-256")
 

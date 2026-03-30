@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bare `except:` clauses replaced with specific `MechanismNotSupportedError` handling
 
 ### Changed
+- Renamed `pqc_hash_to_curve` to `pqc_hash` (`pqc_hash_to_curve` remains as a deprecated alias)
 - Added `pytest-asyncio` to dev dependencies
 
 ## [0.1.0] - 2026-01-07

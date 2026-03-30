@@ -14,7 +14,7 @@ EXPECTED_TOOLS = [
     "pqc_decapsulate",
     "pqc_sign",
     "pqc_verify",
-    "pqc_hash_to_curve",
+    "pqc_hash",
     "pqc_security_analysis",
 ]
 
@@ -52,47 +52,47 @@ async def test_unknown_tool_returns_error(call_tool):
 
 
 @pytest.mark.asyncio
-async def test_hash_to_curve_sha3_256(call_tool):
+async def test_hash_sha3_256(call_tool):
     """Hash tool doesn't need liboqs — uses stdlib hashlib."""
-    result = await call_tool("pqc_hash_to_curve", {"message": "hello", "algorithm": "SHA3-256"})
+    result = await call_tool("pqc_hash", {"message": "hello", "algorithm": "SHA3-256"})
     assert result["algorithm"] == "SHA3-256"
     assert result["digest_size"] == 32
     assert len(result["digest_hex"]) == 64
 
 
 @pytest.mark.asyncio
-async def test_hash_to_curve_sha3_512(call_tool):
-    result = await call_tool("pqc_hash_to_curve", {"message": "hello", "algorithm": "SHA3-512"})
+async def test_hash_sha3_512(call_tool):
+    result = await call_tool("pqc_hash", {"message": "hello", "algorithm": "SHA3-512"})
     assert result["digest_size"] == 64
 
 
 @pytest.mark.asyncio
-async def test_hash_to_curve_shake128(call_tool):
-    result = await call_tool("pqc_hash_to_curve", {"message": "hello", "algorithm": "SHAKE128"})
+async def test_hash_shake128(call_tool):
+    result = await call_tool("pqc_hash", {"message": "hello", "algorithm": "SHAKE128"})
     assert result["digest_size"] == 32
 
 
 @pytest.mark.asyncio
-async def test_hash_to_curve_shake256(call_tool):
-    result = await call_tool("pqc_hash_to_curve", {"message": "hello", "algorithm": "SHAKE256"})
+async def test_hash_shake256(call_tool):
+    result = await call_tool("pqc_hash", {"message": "hello", "algorithm": "SHAKE256"})
     assert result["digest_size"] == 64
 
 
 @pytest.mark.asyncio
-async def test_hash_to_curve_default_algorithm(call_tool):
-    result = await call_tool("pqc_hash_to_curve", {"message": "test"})
+async def test_hash_default_algorithm(call_tool):
+    result = await call_tool("pqc_hash", {"message": "test"})
     assert result["algorithm"] == "SHA3-256"
 
 
 @pytest.mark.asyncio
-async def test_hash_to_curve_deterministic(call_tool):
-    r1 = await call_tool("pqc_hash_to_curve", {"message": "deterministic"})
-    r2 = await call_tool("pqc_hash_to_curve", {"message": "deterministic"})
+async def test_hash_deterministic(call_tool):
+    r1 = await call_tool("pqc_hash", {"message": "deterministic"})
+    r2 = await call_tool("pqc_hash", {"message": "deterministic"})
     assert r1["digest_hex"] == r2["digest_hex"]
 
 
 @pytest.mark.asyncio
-async def test_hash_to_curve_different_inputs(call_tool):
-    r1 = await call_tool("pqc_hash_to_curve", {"message": "aaa"})
-    r2 = await call_tool("pqc_hash_to_curve", {"message": "bbb"})
+async def test_hash_different_inputs(call_tool):
+    r1 = await call_tool("pqc_hash", {"message": "aaa"})
+    r2 = await call_tool("pqc_hash", {"message": "bbb"})
     assert r1["digest_hex"] != r2["digest_hex"]
