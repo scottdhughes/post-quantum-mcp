@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install black mypy
+      - run: pip install -c constraints.txt ".[dev]"
       - run: black --check pqc_mcp_server/ tests/
       - run: mypy pqc_mcp_server/
 
@@ -79,7 +79,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install ".[dev]"
+          pip install -c constraints.txt ".[dev]"
 
       - name: Run tests
         env:
@@ -139,7 +139,7 @@ Insert after line 7 (the MCP badge), before the description paragraph:
 - [ ] **Step 1: Stage all PR 1 files**
 
 ```bash
-git add pqc_mcp_server/__init__.py pyproject.toml run.sh CHANGELOG.md tests/ .github/ README.md
+git add pqc_mcp_server/__init__.py pyproject.toml run.sh CHANGELOG.md tests/ .github/ README.md constraints.txt
 ```
 
 - [ ] **Step 2: Commit**
@@ -277,7 +277,7 @@ This is the main feature. TDD: tests first, then implementation.
 
 ```toml
 dependencies = [
-    "mcp>=1.0.0,<2.0.0",
+    "mcp>=1.6.0,<2.0.0",
     "liboqs-python>=0.10.0",
     "cryptography>=42.0.0",
 ]
@@ -317,6 +317,7 @@ pytest.importorskip("cryptography", reason="cryptography not installed")
 from pqc_mcp_server.hybrid import (
     SUITE,
     COMBINER_LABEL,
+    _HKDF_INFO_PREFIX,
     _validate_x25519_key,
     _check_x25519_shared_secret,
     _kem_combine,
@@ -439,7 +440,11 @@ def _derive_aead_key_and_nonce(combined_ss: bytes) -> tuple[bytes, bytes]:
 
 
 def _build_aad(epk_x25519: bytes, pqc_ciphertext: bytes) -> bytes:
-    """Canonical AAD: version|suite|epk|pqc_ct."""
+    """Canonical AAD: version|suite|epk|pqc_ct.
+
+    Layout: b"pqc-mcp-v1" (10) + b"|mlkem768-x25519-sha3-256|" (26) + epk (32) + ct (variable)
+    Total prefix before epk: 36 bytes.
+    """
     return (
         b"pqc-mcp-v1"
         + b"|mlkem768-x25519-sha3-256|"
@@ -546,9 +551,11 @@ class TestAAD:
         epk = b"\xaa" * 32
         ct = b"\xbb" * 100
         aad = _build_aad(epk, ct)
-        assert aad.startswith(b"pqc-mcp-v1|mlkem768-x25519-sha3-256|")
-        assert aad[38:70] == epk
-        assert aad[70:] == ct
+        prefix = b"pqc-mcp-v1|mlkem768-x25519-sha3-256|"
+        assert len(prefix) == 36
+        assert aad.startswith(prefix)
+        assert aad[36:68] == epk
+        assert aad[68:] == ct
 
     def test_aad_is_deterministic(self):
         epk = b"\x01" * 32
@@ -981,12 +988,6 @@ class TestSealOpen:
             )
 
 
-class TestInvalidBase64:
-    def test_encap_rejects_invalid_base64_classical_key(self, call_tool):
-        """MCP handler should return error for non-base64 input."""
-        # This tests the MCP handler layer in __init__.py
-        # The pure crypto layer (hybrid.py) receives raw bytes
-        pass  # Covered by MCP handler's validate=True on b64decode
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1217,53 +1218,55 @@ In the `call_tool` function, add handlers before the `else: Unknown tool` branch
             result = hybrid_keygen()
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
-        elif name == "pqc_hybrid_encap":
+        elif name in ("pqc_hybrid_encap", "pqc_hybrid_decap", "pqc_hybrid_seal", "pqc_hybrid_open"):
             if not HAS_HYBRID:
-                return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed"}, indent=2))]
-            result = hybrid_encap(
-                base64.b64decode(arguments["classical_public_key"], validate=True),
-                base64.b64decode(arguments["pqc_public_key"], validate=True),
-            )
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+                return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed", "install": "pip install cryptography>=42.0.0"}, indent=2))]
+            import binascii
+            try:
+                if name == "pqc_hybrid_encap":
+                    result = hybrid_encap(
+                        base64.b64decode(arguments["classical_public_key"], validate=True),
+                        base64.b64decode(arguments["pqc_public_key"], validate=True),
+                    )
+                    return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
-        elif name == "pqc_hybrid_decap":
-            if not HAS_HYBRID:
-                return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed"}, indent=2))]
-            result = hybrid_decap(
-                base64.b64decode(arguments["classical_secret_key"], validate=True),
-                base64.b64decode(arguments["pqc_secret_key"], validate=True),
-                base64.b64decode(arguments["x25519_ephemeral_public_key"], validate=True),
-                base64.b64decode(arguments["pqc_ciphertext"], validate=True),
-            )
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+                elif name == "pqc_hybrid_decap":
+                    result = hybrid_decap(
+                        base64.b64decode(arguments["classical_secret_key"], validate=True),
+                        base64.b64decode(arguments["pqc_secret_key"], validate=True),
+                        base64.b64decode(arguments["x25519_ephemeral_public_key"], validate=True),
+                        base64.b64decode(arguments["pqc_ciphertext"], validate=True),
+                    )
+                    return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
-        elif name == "pqc_hybrid_seal":
-            if not HAS_HYBRID:
-                return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed"}, indent=2))]
-            if "plaintext" in arguments and "plaintext_base64" in arguments:
-                return [TextContent(type="text", text=json.dumps({"error": "Provide exactly one of plaintext or plaintext_base64, not both"}, indent=2))]
-            if "plaintext" in arguments:
-                pt_bytes = arguments["plaintext"].encode("utf-8")
-            elif "plaintext_base64" in arguments:
-                pt_bytes = base64.b64decode(arguments["plaintext_base64"], validate=True)
-            else:
-                return [TextContent(type="text", text=json.dumps({"error": "Provide plaintext or plaintext_base64"}, indent=2))]
-            envelope = hybrid_seal(
-                pt_bytes,
-                base64.b64decode(arguments["recipient_classical_public_key"], validate=True),
-                base64.b64decode(arguments["recipient_pqc_public_key"], validate=True),
-            )
-            return [TextContent(type="text", text=json.dumps({"envelope": envelope}, indent=2))]
+                elif name == "pqc_hybrid_seal":
+                    if "plaintext" in arguments and "plaintext_base64" in arguments:
+                        return [TextContent(type="text", text=json.dumps({"error": "Provide exactly one of plaintext or plaintext_base64, not both"}, indent=2))]
+                    if "plaintext" in arguments:
+                        pt_bytes = arguments["plaintext"].encode("utf-8")
+                    elif "plaintext_base64" in arguments:
+                        pt_bytes = base64.b64decode(arguments["plaintext_base64"], validate=True)
+                    else:
+                        return [TextContent(type="text", text=json.dumps({"error": "Provide plaintext or plaintext_base64"}, indent=2))]
+                    envelope = hybrid_seal(
+                        pt_bytes,
+                        base64.b64decode(arguments["recipient_classical_public_key"], validate=True),
+                        base64.b64decode(arguments["recipient_pqc_public_key"], validate=True),
+                    )
+                    return [TextContent(type="text", text=json.dumps({"envelope": envelope}, indent=2))]
 
-        elif name == "pqc_hybrid_open":
-            if not HAS_HYBRID:
-                return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed"}, indent=2))]
-            result = hybrid_open(
-                arguments["envelope"],
-                base64.b64decode(arguments["classical_secret_key"], validate=True),
-                base64.b64decode(arguments["pqc_secret_key"], validate=True),
-            )
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+                elif name == "pqc_hybrid_open":
+                    result = hybrid_open(
+                        arguments["envelope"],
+                        base64.b64decode(arguments["classical_secret_key"], validate=True),
+                        base64.b64decode(arguments["pqc_secret_key"], validate=True),
+                    )
+                    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+            except binascii.Error as e:
+                return [TextContent(type="text", text=json.dumps({"error": f"Invalid base64 input: {e}"}, indent=2))]
+            except ValueError as e:
+                return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 ```
 
 - [ ] **Step 4: Update test_server.py EXPECTED_TOOLS**
@@ -1317,7 +1320,7 @@ After the existing "Available Tools" section, add a "Hybrid Key Exchange" subsec
 ```markdown
 ## Hybrid Key Exchange (X25519 + ML-KEM-768)
 
-Suite: `mlkem768-x25519-sha3-256` — aligned with the LAMPS composite ML-KEM draft.
+Suite: `mlkem768-x25519-sha3-256` — borrows the KEM combiner from the LAMPS composite ML-KEM draft (`id-MLKEM768-X25519-SHA3-256`). The sealed-envelope layer is this project's own protocol built on top of that combiner.
 
 This is an **anonymous sealed-box** construction providing hybrid confidentiality with ciphertext integrity. It is not forward-secret against recipient key compromise, and it is not sender-authenticated.
 
