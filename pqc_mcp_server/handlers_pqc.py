@@ -6,6 +6,7 @@ Error handling is done by the dispatch layer in __init__.py.
 
 import base64
 import hashlib
+import time
 from typing import Any
 
 import oqs
@@ -220,4 +221,100 @@ def handle_security_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
         "recommendation": (
             "NIST approved for post-quantum security" if nist_level else "Experimental"
         ),
+    }
+
+
+def handle_benchmark(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Benchmark a PQC algorithm: timed keygen, operations, and sizes."""
+    alg = arguments["algorithm"]
+    iterations = min(arguments.get("iterations", 10), 100)  # cap at 100
+    test_message = b"Benchmark test message for PQC operations"
+
+    # Try as KEM
+    try:
+        kem = oqs.KeyEncapsulation(alg)
+        details = kem.details
+
+        # Keygen timing
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            pk = kem.generate_keypair()
+            kem.export_secret_key()
+        keygen_ms = (time.perf_counter() - t0) / iterations * 1000
+
+        # Encap timing
+        sk = kem.export_secret_key()
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            ct, ss = kem.encap_secret(pk)
+        encap_ms = (time.perf_counter() - t0) / iterations * 1000
+
+        # Decap timing
+        kem2 = oqs.KeyEncapsulation(alg, sk)
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            kem2.decap_secret(ct)
+        decap_ms = (time.perf_counter() - t0) / iterations * 1000
+
+        return {
+            "algorithm": alg,
+            "type": "KEM",
+            "iterations": iterations,
+            "timing_ms": {
+                "keygen": round(keygen_ms, 3),
+                "encap": round(encap_ms, 3),
+                "decap": round(decap_ms, 3),
+            },
+            "sizes_bytes": {
+                "public_key": details["length_public_key"],
+                "secret_key": details["length_secret_key"],
+                "ciphertext": details["length_ciphertext"],
+                "shared_secret": details["length_shared_secret"],
+            },
+            "nist_level": details.get("claimed_nist_level", "Unknown"),
+        }
+    except MechanismNotSupportedError:
+        pass
+
+    # Try as signature
+    sig = oqs.Signature(alg)
+    details = sig.details
+
+    # Keygen timing
+    t0 = time.perf_counter()
+    for _ in range(iterations):
+        pk = sig.generate_keypair()
+        sig.export_secret_key()
+    keygen_ms = (time.perf_counter() - t0) / iterations * 1000
+
+    # Sign timing
+    sk = sig.export_secret_key()
+    sig2 = oqs.Signature(alg, sk)
+    t0 = time.perf_counter()
+    for _ in range(iterations):
+        signature = sig2.sign(test_message)
+    sign_ms = (time.perf_counter() - t0) / iterations * 1000
+
+    # Verify timing
+    sig3 = oqs.Signature(alg)
+    t0 = time.perf_counter()
+    for _ in range(iterations):
+        sig3.verify(test_message, signature, pk)
+    verify_ms = (time.perf_counter() - t0) / iterations * 1000
+
+    return {
+        "algorithm": alg,
+        "type": "Signature",
+        "iterations": iterations,
+        "timing_ms": {
+            "keygen": round(keygen_ms, 3),
+            "sign": round(sign_ms, 3),
+            "verify": round(verify_ms, 3),
+        },
+        "sizes_bytes": {
+            "public_key": details["length_public_key"],
+            "secret_key": details["length_secret_key"],
+            "signature": details["length_signature"],
+        },
+        "nist_level": details.get("claimed_nist_level", "Unknown"),
     }

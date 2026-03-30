@@ -114,3 +114,43 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
         expected_sender_public_key=expected_pk,
         expected_sender_fingerprint=expected_fp,
     )
+
+
+def handle_envelope_inspect(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Inspect an envelope's metadata without decrypting. No secret keys needed."""
+    envelope = arguments["envelope"]
+    result: dict[str, Any] = {
+        "version": envelope.get("version"),
+        "suite": envelope.get("suite"),
+    }
+
+    # Measure ciphertext sizes
+    if "ciphertext" in envelope:
+        ct_bytes = _b64(envelope["ciphertext"])
+        result["ciphertext_size"] = len(ct_bytes)
+        # GCM tag is last 16 bytes
+        result["plaintext_size_approx"] = max(0, len(ct_bytes) - 16)
+
+    if "pqc_ciphertext" in envelope:
+        result["pqc_ciphertext_size"] = len(_b64(envelope["pqc_ciphertext"]))
+
+    if "x25519_ephemeral_public_key" in envelope:
+        result["x25519_ephemeral_public_key_size"] = len(
+            _b64(envelope["x25519_ephemeral_public_key"])
+        )
+
+    # Authenticated envelope fields
+    is_authenticated = "sender_signature_algorithm" in envelope
+    result["authenticated"] = is_authenticated
+
+    if is_authenticated:
+        result["sender_signature_algorithm"] = envelope.get("sender_signature_algorithm")
+        result["sender_key_fingerprint"] = envelope.get("sender_key_fingerprint")
+        result["recipient_classical_key_fingerprint"] = envelope.get(
+            "recipient_classical_key_fingerprint"
+        )
+        result["recipient_pqc_key_fingerprint"] = envelope.get("recipient_pqc_key_fingerprint")
+        if "signature" in envelope:
+            result["signature_size"] = len(_b64(envelope["signature"]))
+
+    return result

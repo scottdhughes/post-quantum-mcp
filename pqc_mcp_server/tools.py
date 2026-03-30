@@ -327,4 +327,82 @@ PQC_TOOLS: list[Tool] = [
             "required": ["public_key"],
         },
     ),
+    Tool(
+        name="pqc_envelope_inspect",
+        description="Inspect a sealed or authenticated envelope's metadata without decrypting. No secret keys needed.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "envelope": {
+                    "type": "object",
+                    "description": "Envelope from pqc_hybrid_seal, pqc_hybrid_open, pqc_hybrid_auth_seal, or pqc_hybrid_auth_open",
+                },
+            },
+            "required": ["envelope"],
+        },
+    ),
+    Tool(
+        name="pqc_benchmark",
+        description="Benchmark a PQC algorithm: timed keygen, encap/sign, decap/verify, and key/ciphertext/signature sizes.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "algorithm": {
+                    "type": "string",
+                    "description": "Algorithm name (e.g., 'ML-KEM-768', 'ML-DSA-65')",
+                },
+                "iterations": {
+                    "type": "integer",
+                    "description": "Number of iterations to average (default 10, max 100)",
+                    "default": 10,
+                },
+            },
+            "required": ["algorithm"],
+        },
+    ),
+    Tool(
+        name="pqc_key_store_save",
+        description="Save a keygen output by name for convenient reference. Session-scoped, no persistence.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name for this key (e.g., 'alice-signing', 'bob-hybrid')",
+                },
+                "key_data": {
+                    "type": "object",
+                    "description": "Key data object (output of pqc_hybrid_keygen or pqc_generate_keypair)",
+                },
+            },
+            "required": ["name", "key_data"],
+        },
+    ),
+    Tool(
+        name="pqc_key_store_load",
+        description="Load a stored key by name.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the stored key"},
+            },
+            "required": ["name"],
+        },
+    ),
+    Tool(
+        name="pqc_key_store_list",
+        description="List all stored keys with metadata (names, types, fingerprints). No secret material shown.",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="pqc_key_store_delete",
+        description="Delete a stored key by name.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the key to delete"},
+            },
+            "required": ["name"],
+        },
+    ),
 ]

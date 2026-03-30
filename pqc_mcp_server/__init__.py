@@ -65,6 +65,7 @@ if HAS_LIBOQS:
         handle_verify,
         handle_hash,
         handle_security_analysis,
+        handle_benchmark,
     )
 
     _PQC_HANDLERS = {
@@ -78,6 +79,7 @@ if HAS_LIBOQS:
         "pqc_hash": handle_hash,
         "pqc_hash_to_curve": handle_hash,  # deprecated alias
         "pqc_security_analysis": handle_security_analysis,
+        "pqc_benchmark": handle_benchmark,
     }
 
 if HAS_HYBRID:
@@ -90,6 +92,13 @@ if HAS_HYBRID:
         handle_hybrid_open,
         handle_hybrid_auth_seal,
         handle_hybrid_auth_open,
+        handle_envelope_inspect,
+    )
+    from pqc_mcp_server.key_store import (
+        handle_key_store_save,
+        handle_key_store_load,
+        handle_key_store_list,
+        handle_key_store_delete,
     )
 
     _HYBRID_HANDLERS = {
@@ -101,6 +110,11 @@ if HAS_HYBRID:
         "pqc_hybrid_open": handle_hybrid_open,
         "pqc_hybrid_auth_seal": handle_hybrid_auth_seal,
         "pqc_hybrid_auth_open": handle_hybrid_auth_open,
+        "pqc_envelope_inspect": handle_envelope_inspect,
+        "pqc_key_store_save": handle_key_store_save,
+        "pqc_key_store_load": handle_key_store_load,
+        "pqc_key_store_list": handle_key_store_list,
+        "pqc_key_store_delete": handle_key_store_delete,
     }
 
 # --- MCP Server ---

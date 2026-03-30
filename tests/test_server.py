@@ -25,6 +25,12 @@ EXPECTED_TOOLS = [
     "pqc_hybrid_auth_seal",
     "pqc_hybrid_auth_open",
     "pqc_fingerprint",
+    "pqc_envelope_inspect",
+    "pqc_benchmark",
+    "pqc_key_store_save",
+    "pqc_key_store_load",
+    "pqc_key_store_list",
+    "pqc_key_store_delete",
 ]
 
 
