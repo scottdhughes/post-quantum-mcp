@@ -172,6 +172,29 @@ Input: { "algorithm": "ML-KEM-768" }
 Output: NIST level, classical/quantum security equivalents, Grover/Shor resistance
 ```
 
+## Hybrid Key Exchange (X25519 + ML-KEM-768)
+
+Suite: `mlkem768-x25519-sha3-256` — borrows the KEM combiner from the LAMPS composite ML-KEM draft (`id-MLKEM768-X25519-SHA3-256`). The sealed-envelope layer is this project's own protocol built on top of that combiner.
+
+This is an **anonymous sealed-box** construction providing hybrid confidentiality with ciphertext integrity. It is not forward-secret against recipient key compromise, and it is not sender-authenticated.
+
+### `pqc_hybrid_keygen`
+Generate a hybrid keypair bundle. No parameters needed.
+
+### `pqc_hybrid_encap` / `pqc_hybrid_decap`
+Building-block key encapsulation. Returns a combined shared secret derived via the suite's SHA3-256 combiner.
+
+### `pqc_hybrid_seal` / `pqc_hybrid_open`
+Encrypt/decrypt plaintext using hybrid encapsulation + AES-256-GCM. Full-header AAD binding. Deterministic nonce (not transmitted in envelope).
+
+### Example Hybrid Usage
+
+> "Generate a hybrid keypair and seal a message for me"
+
+> "Perform a hybrid key exchange and show me the shared secret"
+
+> "Encrypt 'classified data' using hybrid PQC and then decrypt it"
+
 ## Supported Algorithms
 
 > **Note:** Legacy algorithm names (Kyber, Dilithium, SPHINCS+) are accepted as aliases for compatibility with older liboqs versions.

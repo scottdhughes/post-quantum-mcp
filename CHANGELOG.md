@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Test suite with pytest covering KEM, signatures, hashing, and algorithm info tools
+- Hybrid X25519 + ML-KEM-768 key exchange (suite: `mlkem768-x25519-sha3-256`)
+- 5 new tools: `pqc_hybrid_keygen`, `pqc_hybrid_encap`, `pqc_hybrid_decap`, `pqc_hybrid_seal`, `pqc_hybrid_open`
+- SHA3-256 KEM combiner borrowing from LAMPS composite ML-KEM draft (`id-MLKEM768-X25519-SHA3-256`)
+- AES-256-GCM sealed envelope with full-header AAD binding and deterministic nonce
+- `cryptography>=42.0.0` dependency for X25519, HKDFExpand, AESGCM
+- Test suite with pytest covering KEM, signatures, hashing, algorithm info, and hybrid tools
 - GitHub Actions CI pipeline (Python 3.10-3.13, Ubuntu + macOS)
 - CHANGELOG.md
 
