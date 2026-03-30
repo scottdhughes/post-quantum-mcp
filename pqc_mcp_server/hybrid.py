@@ -427,6 +427,13 @@ def hybrid_auth_open(
     sender_pk = base64.b64decode(envelope["sender_public_key"], validate=True)
     envelope_fp = envelope["sender_key_fingerprint"]
 
+    # Verify embedded fingerprint is consistent with embedded public key
+    recomputed_fp = _fingerprint_public_key(sender_pk)
+    if recomputed_fp != envelope_fp:
+        raise SenderVerificationError(
+            "Envelope sender_key_fingerprint is inconsistent with sender_public_key"
+        )
+
     # Verify sender binding BEFORE signature verification
     if expected_sender_public_key is not None:
         if sender_pk != expected_sender_public_key:

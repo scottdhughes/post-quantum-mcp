@@ -426,6 +426,29 @@ class TestAuthSealOpen:
         assert result["plaintext"] is None
         assert base64.b64decode(result["plaintext_base64"]) == non_utf8
 
+    def test_inconsistent_fingerprint_and_public_key_fails(self):
+        """Attacker signs with their own key but places a different fingerprint.
+        The recomputed fingerprint must not match the embedded one."""
+        sender_sk, sender_pk = _make_sender_keys()
+        _, other_pk = _make_sender_keys()
+        recipient = _make_recipient_keys()
+        envelope = hybrid_auth_seal(
+            b"data",
+            base64.b64decode(recipient["classical"]["public_key"]),
+            base64.b64decode(recipient["pqc"]["public_key"]),
+            sender_sk,
+            sender_pk,
+        )
+        # Replace fingerprint with one that doesn't match the embedded public key
+        envelope["sender_key_fingerprint"] = _fingerprint_public_key(other_pk)
+        with pytest.raises(SenderVerificationError, match="inconsistent"):
+            hybrid_auth_open(
+                envelope,
+                base64.b64decode(recipient["classical"]["secret_key"]),
+                base64.b64decode(recipient["pqc"]["secret_key"]),
+                expected_sender_fingerprint=_fingerprint_public_key(other_pk),
+            )
+
     def test_verify_before_decrypt(self):
         """Invalid signature must yield SenderVerificationError, not InvalidTag.
         This proves verification happens before decryption."""

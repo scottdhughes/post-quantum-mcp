@@ -264,7 +264,7 @@ post-quantum-mcp/
 │   ├── __init__.py      # MCP server + tool handlers
 │   ├── __main__.py      # Entry point
 │   └── hybrid.py        # Hybrid X25519 + ML-KEM-768 crypto + authenticated envelopes (ML-DSA-65)
-├── tests/               # 73 tests (KEM, signatures, hashing, hybrid, MCP handlers)
+├── tests/               # 106 tests (KEM, signatures, hashing, hybrid, authenticated envelopes, MCP handlers)
 ├── .github/workflows/   # CI pipeline (Python 3.10-3.13 × Ubuntu/macOS)
 ├── run.sh               # Wrapper script (sets library paths, finds venv)
 ├── pyproject.toml       # Package configuration
@@ -279,7 +279,9 @@ post-quantum-mcp/
 - **Key Storage**: Keys are generated in memory and returned in tool output. No persistent key storage.
 - **Side Channels**: liboqs implementations aim to be constant-time but may not be suitable for all threat models.
 - **Algorithm Selection**: ML-KEM and ML-DSA are NIST-standardized. Other algorithms are experimental.
-- **Hybrid Scheme**: The sealed-envelope layer is anonymous (not sender-authenticated) and not forward-secret against recipient key compromise.
+- **Anonymous Hybrid Envelope** (`hybrid_seal`/`hybrid_open`): Not sender-authenticated. Anyone with recipient public keys can seal.
+- **Authenticated Hybrid Envelope** (`hybrid_auth_seal`/`hybrid_auth_open`): Sender-authenticated via ML-DSA-65 signature. Recipient must supply expected sender identity.
+- **Neither mode is forward-secret** against later recipient long-term key compromise.
 - **Version Compatibility**: Tested with liboqs 0.15.0 + liboqs-python 0.14.1. Version skew may produce warnings.
 
 ## Development
