@@ -145,6 +145,7 @@ def hybrid_keygen() -> dict[str, Any]:
     """Generate a hybrid X25519 + ML-KEM-768 keypair bundle."""
     x_sk = X25519PrivateKey.generate()
     x_pk = x_sk.public_key()
+    x_pk_bytes = x_pk.public_bytes(Encoding.Raw, PublicFormat.Raw)
 
     kem = oqs.KeyEncapsulation("ML-KEM-768")
     pqc_pk = kem.generate_keypair()
@@ -154,17 +155,17 @@ def hybrid_keygen() -> dict[str, Any]:
         "suite": SUITE,
         "classical": {
             "algorithm": "X25519",
-            "public_key": base64.b64encode(
-                x_pk.public_bytes(Encoding.Raw, PublicFormat.Raw)
-            ).decode(),
+            "public_key": base64.b64encode(x_pk_bytes).decode(),
             "secret_key": base64.b64encode(
                 x_sk.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
             ).decode(),
+            "fingerprint": _fingerprint_public_key(x_pk_bytes),
         },
         "pqc": {
             "algorithm": "ML-KEM-768",
             "public_key": base64.b64encode(pqc_pk).decode(),
             "secret_key": base64.b64encode(pqc_sk).decode(),
+            "fingerprint": _fingerprint_public_key(pqc_pk),
         },
     }
 

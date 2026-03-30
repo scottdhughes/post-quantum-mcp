@@ -24,6 +24,7 @@ EXPECTED_TOOLS = [
     "pqc_hybrid_open",
     "pqc_hybrid_auth_seal",
     "pqc_hybrid_auth_open",
+    "pqc_fingerprint",
 ]
 
 
@@ -302,3 +303,32 @@ async def test_hybrid_auth_seal_exactly_one_plaintext(call_tool):
     )
     assert "error" in result
     assert "exactly one" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_tool(call_tool):
+    """pqc_fingerprint computes SHA3-256 hex fingerprint."""
+    keys = await call_tool("pqc_hybrid_keygen", {})
+    result = await call_tool("pqc_fingerprint", {"public_key": keys["classical"]["public_key"]})
+    assert "fingerprint" in result
+    assert len(result["fingerprint"]) == 64  # SHA3-256 hex
+    assert result["algorithm"] == "SHA3-256"
+    # Must match the fingerprint already in keygen output
+    assert result["fingerprint"] == keys["classical"]["fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_tool_malformed_base64(call_tool):
+    result = await call_tool("pqc_fingerprint", {"public_key": "not!valid###"})
+    assert "error" in result
+    assert "Invalid base64" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_keygen_includes_fingerprints(call_tool):
+    """pqc_hybrid_keygen now returns fingerprints for both key types."""
+    keys = await call_tool("pqc_hybrid_keygen", {})
+    assert "fingerprint" in keys["classical"]
+    assert "fingerprint" in keys["pqc"]
+    assert len(keys["classical"]["fingerprint"]) == 64
+    assert len(keys["pqc"]["fingerprint"]) == 64

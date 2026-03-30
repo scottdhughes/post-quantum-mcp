@@ -35,6 +35,7 @@ try:
         hybrid_open,
         hybrid_auth_seal,
         hybrid_auth_open,
+        _fingerprint_public_key,
         SenderVerificationError,
         SUITE as HYBRID_SUITE,
         DEFAULT_SIG_ALGORITHM as HYBRID_SIG_ALG,
@@ -407,6 +408,20 @@ async def list_tools() -> list[Tool]:
                 "required": ["envelope", "classical_secret_key", "pqc_secret_key"],
             },
         ),
+        Tool(
+            name="pqc_fingerprint",
+            description="Compute SHA3-256 fingerprint of a public key. Returns lowercase hex. Useful for identity verification without exchanging full keys.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded public key (any algorithm)",
+                    },
+                },
+                "required": ["public_key"],
+            },
+        ),
     ]
 
 
@@ -670,6 +685,45 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 ),
             }
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "pqc_fingerprint":
+            if not HAS_HYBRID:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {
+                                "error": "Hybrid dependencies unavailable or failed to import. Install liboqs-python and cryptography>=42.0.0."
+                            },
+                            indent=2,
+                        ),
+                    )
+                ]
+            import binascii as _binascii
+
+            try:
+                pk_bytes = base64.b64decode(arguments["public_key"], validate=True)
+            except _binascii.Error as e:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"error": f"Invalid base64 input: {e}"}, indent=2),
+                    )
+                ]
+            fp = _fingerprint_public_key(pk_bytes)
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "fingerprint": fp,
+                            "algorithm": "SHA3-256",
+                            "public_key_size": len(pk_bytes),
+                        },
+                        indent=2,
+                    ),
+                )
+            ]
 
         elif name == "pqc_hybrid_keygen":
             if not HAS_HYBRID:

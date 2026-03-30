@@ -148,6 +148,14 @@ class TestKeygen:
         assert len(pk) > 0
         assert len(sk) > 0
 
+    def test_keygen_includes_fingerprints(self):
+        result = hybrid_keygen()
+        assert len(result["classical"]["fingerprint"]) == 64
+        assert len(result["pqc"]["fingerprint"]) == 64
+        # Fingerprint must match SHA3-256 of the public key
+        pk = base64.b64decode(result["classical"]["public_key"])
+        assert result["classical"]["fingerprint"] == hashlib.sha3_256(pk).hexdigest()
+
     def test_keygen_unique(self):
         r1 = hybrid_keygen()
         r2 = hybrid_keygen()
