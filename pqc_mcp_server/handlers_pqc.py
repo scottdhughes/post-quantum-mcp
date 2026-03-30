@@ -1,0 +1,223 @@
+"""Handlers for generic PQC tools (liboqs wrappers).
+
+Each handler takes arguments dict, returns a result dict.
+Error handling is done by the dispatch layer in __init__.py.
+"""
+
+import base64
+import hashlib
+from typing import Any
+
+import oqs
+from oqs import MechanismNotSupportedError
+
+
+def handle_list_algorithms(arguments: dict[str, Any]) -> dict[str, Any]:
+    filter_type = arguments.get("type", "all")
+    result: dict[str, Any] = {
+        "kem_algorithms": oqs.get_enabled_kem_mechanisms(),
+        "sig_algorithms": oqs.get_enabled_sig_mechanisms(),
+    }
+
+    if filter_type == "kem":
+        result = {"kem_algorithms": result["kem_algorithms"]}
+    elif filter_type == "sig":
+        result = {"sig_algorithms": result["sig_algorithms"]}
+
+    result["nist_standards"] = {
+        "ML-KEM": "FIPS 203 (formerly CRYSTALS-Kyber)",
+        "ML-DSA": "FIPS 204 (formerly CRYSTALS-Dilithium)",
+        "SLH-DSA": "FIPS 205 (formerly SPHINCS+)",
+        "HQC": "Round 4 finalist, standardization in progress",
+    }
+    return result
+
+
+def handle_algorithm_info(arguments: dict[str, Any]) -> dict[str, Any]:
+    alg = arguments["algorithm"]
+
+    try:
+        kem = oqs.KeyEncapsulation(alg)
+        return {
+            "name": alg,
+            "type": "KEM (Key Encapsulation Mechanism)",
+            "public_key_size": kem.details["length_public_key"],
+            "secret_key_size": kem.details["length_secret_key"],
+            "ciphertext_size": kem.details["length_ciphertext"],
+            "shared_secret_size": kem.details["length_shared_secret"],
+            "nist_level": kem.details.get("claimed_nist_level", "Unknown"),
+            "is_ind_cca": kem.details.get("is_ind_cca", True),
+        }
+    except MechanismNotSupportedError:
+        pass
+
+    try:
+        sig = oqs.Signature(alg)
+        return {
+            "name": alg,
+            "type": "Digital Signature",
+            "public_key_size": sig.details["length_public_key"],
+            "secret_key_size": sig.details["length_secret_key"],
+            "signature_size": sig.details["length_signature"],
+            "nist_level": sig.details.get("claimed_nist_level", "Unknown"),
+            "is_euf_cma": sig.details.get("is_euf_cma", True),
+        }
+    except MechanismNotSupportedError:
+        pass
+
+    return {"error": f"Unknown algorithm: {alg}"}
+
+
+def handle_generate_keypair(arguments: dict[str, Any]) -> dict[str, Any]:
+    alg = arguments["algorithm"]
+
+    try:
+        kem = oqs.KeyEncapsulation(alg)
+        public_key = kem.generate_keypair()
+        secret_key = kem.export_secret_key()
+        return {
+            "algorithm": alg,
+            "type": "KEM",
+            "public_key": base64.b64encode(public_key).decode(),
+            "secret_key": base64.b64encode(secret_key).decode(),
+            "public_key_size": len(public_key),
+            "secret_key_size": len(secret_key),
+        }
+    except MechanismNotSupportedError:
+        pass
+
+    sig = oqs.Signature(alg)
+    public_key = sig.generate_keypair()
+    secret_key = sig.export_secret_key()
+    return {
+        "algorithm": alg,
+        "type": "Signature",
+        "public_key": base64.b64encode(public_key).decode(),
+        "secret_key": base64.b64encode(secret_key).decode(),
+        "public_key_size": len(public_key),
+        "secret_key_size": len(secret_key),
+    }
+
+
+def handle_encapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
+    alg = arguments["algorithm"]
+    public_key = base64.b64decode(arguments["public_key"])
+    kem = oqs.KeyEncapsulation(alg)
+    ciphertext, shared_secret = kem.encap_secret(public_key)
+    return {
+        "algorithm": alg,
+        "ciphertext": base64.b64encode(ciphertext).decode(),
+        "shared_secret": base64.b64encode(shared_secret).decode(),
+        "shared_secret_hex": shared_secret.hex(),
+        "ciphertext_size": len(ciphertext),
+    }
+
+
+def handle_decapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
+    alg = arguments["algorithm"]
+    secret_key = base64.b64decode(arguments["secret_key"])
+    ciphertext = base64.b64decode(arguments["ciphertext"])
+    kem = oqs.KeyEncapsulation(alg, secret_key)
+    shared_secret = kem.decap_secret(ciphertext)
+    return {
+        "algorithm": alg,
+        "shared_secret": base64.b64encode(shared_secret).decode(),
+        "shared_secret_hex": shared_secret.hex(),
+    }
+
+
+def handle_sign(arguments: dict[str, Any]) -> dict[str, Any]:
+    alg = arguments["algorithm"]
+    secret_key = base64.b64decode(arguments["secret_key"])
+    message = arguments["message"].encode("utf-8")
+    sig = oqs.Signature(alg, secret_key)
+    signature = sig.sign(message)
+    return {
+        "algorithm": alg,
+        "message_hash": hashlib.sha3_256(message).hexdigest(),
+        "signature": base64.b64encode(signature).decode(),
+        "signature_size": len(signature),
+    }
+
+
+def handle_verify(arguments: dict[str, Any]) -> dict[str, Any]:
+    alg = arguments["algorithm"]
+    public_key = base64.b64decode(arguments["public_key"])
+    message = arguments["message"].encode("utf-8")
+    signature = base64.b64decode(arguments["signature"])
+    sig = oqs.Signature(alg)
+    is_valid = sig.verify(message, signature, public_key)
+    return {
+        "algorithm": alg,
+        "valid": is_valid,
+        "message_hash": hashlib.sha3_256(message).hexdigest(),
+    }
+
+
+def handle_hash(arguments: dict[str, Any]) -> dict[str, Any]:
+    message = arguments["message"].encode("utf-8")
+    alg = arguments.get("algorithm", "SHA3-256")
+
+    if alg == "SHA3-256":
+        digest = hashlib.sha3_256(message).digest()
+    elif alg == "SHA3-512":
+        digest = hashlib.sha3_512(message).digest()
+    elif alg == "SHAKE128":
+        digest = hashlib.shake_128(message).digest(32)
+    elif alg == "SHAKE256":
+        digest = hashlib.shake_256(message).digest(64)
+    else:
+        digest = hashlib.sha3_256(message).digest()
+
+    return {
+        "algorithm": alg,
+        "input": arguments["message"],
+        "digest_hex": digest.hex(),
+        "digest_base64": base64.b64encode(digest).decode(),
+        "digest_size": len(digest),
+    }
+
+
+def handle_security_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
+    alg = arguments["algorithm"]
+
+    security_levels = {
+        1: {"classical": "AES-128", "quantum": "AES-64 equivalent", "bits": 128},
+        2: {"classical": "SHA-256", "quantum": "AES-80 equivalent", "bits": 192},
+        3: {"classical": "AES-192", "quantum": "AES-96 equivalent", "bits": 192},
+        4: {"classical": "SHA-384", "quantum": "AES-112 equivalent", "bits": 256},
+        5: {"classical": "AES-256", "quantum": "AES-128 equivalent", "bits": 256},
+    }
+
+    nist_level = None
+    alg_type = None
+
+    try:
+        kem = oqs.KeyEncapsulation(alg)
+        nist_level = kem.details.get("claimed_nist_level", 3)
+        alg_type = "KEM"
+    except MechanismNotSupportedError:
+        try:
+            sig = oqs.Signature(alg)
+            nist_level = sig.details.get("claimed_nist_level", 3)
+            alg_type = "Signature"
+        except MechanismNotSupportedError:
+            return {"error": f"Unknown algorithm: {alg}"}
+
+    level_info = security_levels.get(nist_level, security_levels[3])
+    bits: int = level_info["bits"]  # type: ignore[assignment]
+
+    return {
+        "algorithm": alg,
+        "type": alg_type,
+        "nist_security_level": nist_level,
+        "classical_security": level_info["classical"],
+        "quantum_security": level_info["quantum"],
+        "security_bits": bits,
+        "quantum_resistant": True,
+        "grover_resistance": f"Grover's algorithm reduces security by ~50% to {bits // 2} bits",
+        "shor_resistance": "Resistant to Shor's algorithm (not based on factoring/DLP)",
+        "recommendation": (
+            "NIST approved for post-quantum security" if nist_level else "Experimental"
+        ),
+    }
