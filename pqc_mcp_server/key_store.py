@@ -5,10 +5,76 @@ No persistence — cleared on server restart.
 Research/prototyping only.
 """
 
+import base64
+import hashlib
 from typing import Any
 
 # Module-level store (lives for the server's lifetime)
 _STORE: dict[str, dict[str, Any]] = {}
+
+
+def _fingerprint(public_key_b64: str) -> str:
+    """SHA3-256 fingerprint of a base64-encoded public key."""
+    return hashlib.sha3_256(base64.b64decode(public_key_b64)).hexdigest()
+
+
+def store_from_keygen(name: str, key_data: dict[str, Any], overwrite: bool = False) -> None:
+    """Store keygen output as a handle. Fails on collision unless overwrite=True."""
+    if name in _STORE and not overwrite:
+        raise ValueError(f"Key '{name}' already exists in store. Pass overwrite: true to replace.")
+
+    entry: dict[str, Any] = {
+        "name": name,
+        "key_data": key_data,
+        "stored_as_handle": True,
+    }
+
+    if "suite" in key_data:
+        entry["type"] = "hybrid"
+        entry["suite"] = key_data["suite"]
+        if "classical" in key_data and "fingerprint" in key_data["classical"]:
+            entry["classical_fingerprint"] = key_data["classical"]["fingerprint"]
+        if "pqc" in key_data and "fingerprint" in key_data["pqc"]:
+            entry["pqc_fingerprint"] = key_data["pqc"]["fingerprint"]
+    elif "algorithm" in key_data:
+        entry["type"] = key_data.get("type", "unknown").lower()
+        entry["algorithm"] = key_data["algorithm"]
+        if "public_key" in key_data:
+            entry["fingerprint"] = _fingerprint(key_data["public_key"])
+
+    _STORE[name] = entry
+
+
+def _resolve_from_store(name: str) -> dict[str, Any]:
+    """Internal: resolve full key_data (including secrets) by name."""
+    entry = _STORE.get(name)
+    if entry is None:
+        raise ValueError(f"Key '{name}' not found in store")
+    result: dict[str, Any] = entry["key_data"]
+    return result
+
+
+def _require_hybrid_bundle(keys: dict[str, Any], name: str) -> None:
+    if "suite" not in keys:
+        raise ValueError(f"Key '{name}' is not a hybrid bundle")
+
+
+def _require_flat_signature(keys: dict[str, Any], name: str) -> None:
+    if "suite" in keys:
+        raise ValueError(f"Key '{name}' is a hybrid bundle, not a signing keypair")
+    if keys.get("type", "").lower() != "signature":
+        raise ValueError(
+            f"Key '{name}' is a {keys.get('type', 'unknown')} keypair, not a signing keypair"
+        )
+
+
+def _require_flat_kem(keys: dict[str, Any], name: str) -> None:
+    if "suite" in keys:
+        raise ValueError(f"Key '{name}' is a hybrid bundle, not a KEM keypair")
+    if keys.get("type", "").lower() != "kem":
+        raise ValueError(
+            f"Key '{name}' is a {keys.get('type', 'unknown')} keypair, not a KEM keypair"
+        )
 
 
 def handle_key_store_save(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -41,13 +107,40 @@ def handle_key_store_save(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_key_store_load(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Load a stored key by name."""
+    """Load a stored key by name. Handle entries return public material only."""
     name = arguments["name"]
     entry = _STORE.get(name)
     if entry is None:
         return {"error": f"Key '{name}' not found in store"}
-    result: dict[str, Any] = entry["key_data"]
-    return result
+
+    if entry.get("stored_as_handle"):
+        key_data = entry["key_data"]
+        result: dict[str, Any] = {"name": name, "stored_as_handle": True}
+        if "suite" in key_data:
+            result["type"] = "hybrid"
+            result["suite"] = key_data["suite"]
+            result["classical"] = {
+                "algorithm": key_data["classical"]["algorithm"],
+                "public_key": key_data["classical"]["public_key"],
+                "fingerprint": key_data["classical"].get("fingerprint", ""),
+            }
+            result["pqc"] = {
+                "algorithm": key_data["pqc"]["algorithm"],
+                "public_key": key_data["pqc"]["public_key"],
+                "fingerprint": key_data["pqc"].get("fingerprint", ""),
+            }
+        else:
+            result["type"] = key_data.get("type", "unknown")
+            result["algorithm"] = key_data.get("algorithm", "")
+            result["public_key"] = key_data.get("public_key", "")
+            result["public_key_size"] = key_data.get("public_key_size", 0)
+            if "public_key" in key_data:
+                result["fingerprint"] = _fingerprint(key_data["public_key"])
+                result["fingerprint_algorithm"] = "SHA3-256"
+        return result
+
+    result2: dict[str, Any] = entry["key_data"]
+    return result2
 
 
 def handle_key_store_list(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -55,6 +148,7 @@ def handle_key_store_list(arguments: dict[str, Any]) -> dict[str, Any]:
     keys = []
     for name, entry in _STORE.items():
         summary: dict[str, Any] = {"name": name, "type": entry.get("type", "unknown")}
+        summary["stored_as_handle"] = entry.get("stored_as_handle", False)
         if "algorithm" in entry:
             summary["algorithm"] = entry["algorithm"]
         if "suite" in entry:
