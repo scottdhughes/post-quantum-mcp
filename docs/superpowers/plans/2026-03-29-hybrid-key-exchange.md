@@ -283,11 +283,22 @@ dependencies = [
 ]
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Regenerate constraints.txt**
 
 ```bash
-git add pyproject.toml
-git commit -m "build: add cryptography>=42.0.0 for hybrid key exchange"
+pip install -e ".[dev]"
+pip freeze --exclude-editable > constraints.txt
+```
+
+This updates the frozen dependency set to include `cryptography` and its transitive deps.
+
+- [ ] **Step 3: Commit both together**
+
+```bash
+git add pyproject.toml constraints.txt
+git commit -m "build: add cryptography>=42.0.0 for hybrid key exchange
+
+Update constraints.txt to include cryptography and transitive deps."
 ```
 
 ### Task 9: Implement hybrid.py — validation helpers and combiner
@@ -1101,7 +1112,7 @@ def hybrid_open(
 - [ ] **Step 4: Run seal/open tests**
 
 Run: `pytest tests/test_hybrid.py::TestSealOpen -v`
-Expected: all 7 pass
+Expected: all pass
 
 - [ ] **Step 5: Run all hybrid tests**
 
@@ -1214,13 +1225,13 @@ In the `call_tool` function, add handlers before the `else: Unknown tool` branch
 ```python
         elif name == "pqc_hybrid_keygen":
             if not HAS_HYBRID:
-                return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed", "install": "pip install cryptography>=42.0.0"}, indent=2))]
+                return [TextContent(type="text", text=json.dumps({"error": "Hybrid dependencies unavailable or failed to import. Install liboqs-python and cryptography>=42.0.0."}, indent=2))]
             result = hybrid_keygen()
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         elif name in ("pqc_hybrid_encap", "pqc_hybrid_decap", "pqc_hybrid_seal", "pqc_hybrid_open"):
             if not HAS_HYBRID:
-                return [TextContent(type="text", text=json.dumps({"error": "cryptography package not installed", "install": "pip install cryptography>=42.0.0"}, indent=2))]
+                return [TextContent(type="text", text=json.dumps({"error": "Hybrid dependencies unavailable or failed to import. Install liboqs-python and cryptography>=42.0.0."}, indent=2))]
             import binascii
             try:
                 if name == "pqc_hybrid_encap":
