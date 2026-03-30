@@ -23,6 +23,12 @@ from pqc_mcp_server.hybrid import (
     hybrid_auth_open,
     _fingerprint_public_key,
 )
+from pqc_mcp_server.key_store import (
+    store_from_keygen,
+    _resolve_from_store,
+    _require_hybrid_bundle,
+    _require_flat_signature,
+)
 
 
 def _b64(value: str | bytes) -> bytes:
@@ -41,6 +47,48 @@ def _resolve_plaintext(arguments: dict[str, Any]) -> bytes:
     raise ValueError("Provide plaintext or plaintext_base64")
 
 
+def _resolve_hybrid_public(arguments: dict[str, Any], prefix: str = "") -> tuple[bytes, bytes]:
+    """Resolve hybrid recipient public keys from store or raw args."""
+    store_param = f"{prefix}key_store_name"
+    raw_cpk = f"{prefix}classical_public_key"
+    raw_ppk = f"{prefix}pqc_public_key"
+    has_store = store_param in arguments
+    has_raw = raw_cpk in arguments or raw_ppk in arguments
+    if has_store and has_raw:
+        raise ValueError(f"Provide either {store_param} or raw key parameters, not both")
+    if has_store:
+        keys = _resolve_from_store(arguments[store_param])
+        _require_hybrid_bundle(keys, arguments[store_param])
+        return _b64(keys["classical"]["public_key"]), _b64(keys["pqc"]["public_key"])
+    return _b64(arguments[raw_cpk]), _b64(arguments[raw_ppk])
+
+
+def _resolve_hybrid_secret(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
+    """Resolve hybrid recipient secret keys from store or raw args."""
+    has_store = "key_store_name" in arguments
+    has_raw = "classical_secret_key" in arguments or "pqc_secret_key" in arguments
+    if has_store and has_raw:
+        raise ValueError("Provide either key_store_name or raw key parameters, not both")
+    if has_store:
+        keys = _resolve_from_store(arguments["key_store_name"])
+        _require_hybrid_bundle(keys, arguments["key_store_name"])
+        return _b64(keys["classical"]["secret_key"]), _b64(keys["pqc"]["secret_key"])
+    return _b64(arguments["classical_secret_key"]), _b64(arguments["pqc_secret_key"])
+
+
+def _resolve_sender(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
+    """Resolve sender signing keys from store or raw args. Returns (sk, pk)."""
+    has_store = "sender_key_store_name" in arguments
+    has_raw = "sender_secret_key" in arguments or "sender_public_key" in arguments
+    if has_store and has_raw:
+        raise ValueError("Provide either sender_key_store_name or raw key parameters, not both")
+    if has_store:
+        keys = _resolve_from_store(arguments["sender_key_store_name"])
+        _require_flat_signature(keys, arguments["sender_key_store_name"])
+        return _b64(keys["secret_key"]), _b64(keys["public_key"])
+    return _b64(arguments["sender_secret_key"]), _b64(arguments["sender_public_key"])
+
+
 def handle_fingerprint(arguments: dict[str, Any]) -> dict[str, Any]:
     pk_bytes = _b64(arguments["public_key"])
     return {
@@ -51,20 +99,38 @@ def handle_fingerprint(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_hybrid_keygen(arguments: dict[str, Any]) -> dict[str, Any]:
-    return hybrid_keygen()
+    result = hybrid_keygen()
+    store_name = arguments.get("store_as")
+    if store_name:
+        overwrite = arguments.get("overwrite", False)
+        store_from_keygen(store_name, result, overwrite=overwrite)
+        return {
+            "suite": result["suite"],
+            "handle": store_name,
+            "classical": {
+                "algorithm": result["classical"]["algorithm"],
+                "public_key": result["classical"]["public_key"],
+                "fingerprint": result["classical"]["fingerprint"],
+            },
+            "pqc": {
+                "algorithm": result["pqc"]["algorithm"],
+                "public_key": result["pqc"]["public_key"],
+                "fingerprint": result["pqc"]["fingerprint"],
+            },
+        }
+    return result
 
 
 def handle_hybrid_encap(arguments: dict[str, Any]) -> dict[str, Any]:
-    return hybrid_encap(
-        _b64(arguments["classical_public_key"]),
-        _b64(arguments["pqc_public_key"]),
-    )
+    classical_pk, pqc_pk = _resolve_hybrid_public(arguments)
+    return hybrid_encap(classical_pk, pqc_pk)
 
 
 def handle_hybrid_decap(arguments: dict[str, Any]) -> dict[str, Any]:
+    classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
     return hybrid_decap(
-        _b64(arguments["classical_secret_key"]),
-        _b64(arguments["pqc_secret_key"]),
+        classical_sk,
+        pqc_sk,
         _b64(arguments["x25519_ephemeral_public_key"]),
         _b64(arguments["pqc_ciphertext"]),
     )
@@ -72,35 +138,26 @@ def handle_hybrid_decap(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_hybrid_seal(arguments: dict[str, Any]) -> dict[str, Any]:
     pt_bytes = _resolve_plaintext(arguments)
-    envelope = hybrid_seal(
-        pt_bytes,
-        _b64(arguments["recipient_classical_public_key"]),
-        _b64(arguments["recipient_pqc_public_key"]),
-    )
+    classical_pk, pqc_pk = _resolve_hybrid_public(arguments, prefix="recipient_")
+    envelope = hybrid_seal(pt_bytes, classical_pk, pqc_pk)
     return {"envelope": envelope}
 
 
 def handle_hybrid_open(arguments: dict[str, Any]) -> dict[str, Any]:
-    return hybrid_open(
-        arguments["envelope"],
-        _b64(arguments["classical_secret_key"]),
-        _b64(arguments["pqc_secret_key"]),
-    )
+    classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
+    return hybrid_open(arguments["envelope"], classical_sk, pqc_sk)
 
 
 def handle_hybrid_auth_seal(arguments: dict[str, Any]) -> dict[str, Any]:
     pt_bytes = _resolve_plaintext(arguments)
-    envelope = hybrid_auth_seal(
-        pt_bytes,
-        _b64(arguments["recipient_classical_public_key"]),
-        _b64(arguments["recipient_pqc_public_key"]),
-        _b64(arguments["sender_secret_key"]),
-        _b64(arguments["sender_public_key"]),
-    )
+    classical_pk, pqc_pk = _resolve_hybrid_public(arguments, prefix="recipient_")
+    sender_sk, sender_pk = _resolve_sender(arguments)
+    envelope = hybrid_auth_seal(pt_bytes, classical_pk, pqc_pk, sender_sk, sender_pk)
     return {"envelope": envelope}
 
 
 def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
+    classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
     expected_pk = (
         _b64(arguments["expected_sender_public_key"])
         if "expected_sender_public_key" in arguments
@@ -109,8 +166,8 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
     expected_fp = arguments.get("expected_sender_fingerprint")
     return hybrid_auth_open(
         arguments["envelope"],
-        _b64(arguments["classical_secret_key"]),
-        _b64(arguments["pqc_secret_key"]),
+        classical_sk,
+        pqc_sk,
         expected_sender_public_key=expected_pk,
         expected_sender_fingerprint=expected_fp,
     )

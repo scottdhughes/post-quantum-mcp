@@ -144,3 +144,212 @@ class TestDeleteHandle:
         handle_key_store_delete({"name": "temp"})
         with pytest.raises(ValueError, match="not found"):
             _resolve_from_store("temp")
+
+
+from pqc_mcp_server.handlers_hybrid import (
+    handle_hybrid_keygen,
+    handle_hybrid_seal,
+    handle_hybrid_open,
+    handle_hybrid_encap,
+    handle_hybrid_decap,
+    handle_hybrid_auth_seal,
+    handle_hybrid_auth_open,
+)
+from pqc_mcp_server.hybrid import _fingerprint_public_key
+import oqs as oqs_mod
+
+
+def _make_sender():
+    sig = oqs_mod.Signature("ML-DSA-65")
+    pk = sig.generate_keypair()
+    sk = sig.export_secret_key()
+    return sk, pk
+
+
+class TestHybridKeygenStoreAs:
+    def test_store_as_returns_no_secrets(self):
+        result = handle_hybrid_keygen({"store_as": "alice"})
+        assert result["handle"] == "alice"
+        assert "secret_key" not in result.get("classical", {})
+        assert "secret_key" not in result.get("pqc", {})
+        assert "fingerprint" in result["classical"]
+        assert "fingerprint" in result["pqc"]
+
+    def test_store_as_collision_fails(self):
+        handle_hybrid_keygen({"store_as": "bob"})
+        with pytest.raises(ValueError, match="already exists"):
+            handle_hybrid_keygen({"store_as": "bob"})
+
+    def test_store_as_overwrite_succeeds(self):
+        handle_hybrid_keygen({"store_as": "charlie"})
+        result = handle_hybrid_keygen({"store_as": "charlie", "overwrite": True})
+        assert result["handle"] == "charlie"
+
+    def test_no_store_as_returns_secrets(self):
+        result = handle_hybrid_keygen({})
+        assert "secret_key" in result["classical"]
+
+
+class TestHybridResolution:
+    def test_seal_with_store_name(self):
+        handle_hybrid_keygen({"store_as": "recipient"})
+        result = handle_hybrid_seal(
+            {
+                "plaintext": "hello",
+                "recipient_key_store_name": "recipient",
+            }
+        )
+        assert "envelope" in result
+
+    def test_open_with_store_name(self):
+        keys = handle_hybrid_keygen({"store_as": "recipient"})
+        # Need full keys for seal (use raw for seal, store for open)
+        full_keys = hybrid_keygen()
+        store_from_keygen("r2", full_keys, overwrite=True)
+        envelope = handle_hybrid_seal(
+            {
+                "plaintext": "test",
+                "recipient_key_store_name": "r2",
+            }
+        )["envelope"]
+        result = handle_hybrid_open(
+            {
+                "envelope": envelope,
+                "key_store_name": "r2",
+            }
+        )
+        assert result["plaintext"] == "test"
+
+    def test_encap_with_store_name(self):
+        handle_hybrid_keygen({"store_as": "enc-r"})
+        result = handle_hybrid_encap({"key_store_name": "enc-r"})
+        assert "shared_secret" in result
+
+    def test_decap_with_store_name(self):
+        full_keys = hybrid_keygen()
+        store_from_keygen("dec-r", full_keys, overwrite=True)
+        encap_result = handle_hybrid_encap({"key_store_name": "dec-r"})
+        decap_result = handle_hybrid_decap(
+            {
+                "key_store_name": "dec-r",
+                "x25519_ephemeral_public_key": encap_result["x25519_ephemeral_public_key"],
+                "pqc_ciphertext": encap_result["pqc_ciphertext"],
+            }
+        )
+        assert decap_result["shared_secret"] == encap_result["shared_secret"]
+
+    def test_auth_seal_with_both_store_names(self):
+        handle_hybrid_keygen({"store_as": "auth-r"})
+        sender_sk, sender_pk = _make_sender()
+        keys = handle_generate_keypair({"algorithm": "ML-DSA-65"})
+        store_from_keygen("auth-s", keys, overwrite=True)
+        result = handle_hybrid_auth_seal(
+            {
+                "plaintext": "authenticated",
+                "recipient_key_store_name": "auth-r",
+                "sender_key_store_name": "auth-s",
+            }
+        )
+        assert "envelope" in result
+        assert result["envelope"]["sender_signature_algorithm"] == "ML-DSA-65"
+
+    def test_auth_open_with_store_name(self):
+        full_keys = hybrid_keygen()
+        store_from_keygen("ao-r", full_keys, overwrite=True)
+        sender_keys = handle_generate_keypair({"algorithm": "ML-DSA-65"})
+        store_from_keygen("ao-s", sender_keys, overwrite=True)
+        envelope = handle_hybrid_auth_seal(
+            {
+                "plaintext": "auth test",
+                "recipient_key_store_name": "ao-r",
+                "sender_key_store_name": "ao-s",
+            }
+        )["envelope"]
+        result = handle_hybrid_auth_open(
+            {
+                "envelope": envelope,
+                "key_store_name": "ao-r",
+                "expected_sender_public_key": sender_keys["public_key"],
+            }
+        )
+        assert result["plaintext"] == "auth test"
+        assert result["authenticated"] is True
+
+
+class TestHybridConflicts:
+    def test_seal_conflict_store_and_raw(self):
+        handle_hybrid_keygen({"store_as": "conflict"})
+        with pytest.raises(ValueError, match="not both"):
+            handle_hybrid_seal(
+                {
+                    "plaintext": "x",
+                    "recipient_key_store_name": "conflict",
+                    "recipient_classical_public_key": "AAAA",
+                }
+            )
+
+    def test_open_conflict_store_and_raw(self):
+        with pytest.raises(ValueError, match="not both"):
+            handle_hybrid_open(
+                {
+                    "envelope": {},
+                    "key_store_name": "x",
+                    "classical_secret_key": "AAAA",
+                }
+            )
+
+    def test_auth_seal_sender_conflict(self):
+        handle_hybrid_keygen({"store_as": "sc-r"})
+        with pytest.raises(ValueError, match="not both"):
+            handle_hybrid_auth_seal(
+                {
+                    "plaintext": "x",
+                    "recipient_key_store_name": "sc-r",
+                    "sender_key_store_name": "sc-s",
+                    "sender_secret_key": "AAAA",
+                }
+            )
+
+
+class TestFullRoundtripViaStore:
+    def test_seal_open_no_raw_keys(self):
+        """Full roundtrip with zero raw keys in any call."""
+        full_keys = hybrid_keygen()
+        store_from_keygen("rt-recipient", full_keys, overwrite=True)
+        envelope = handle_hybrid_seal(
+            {
+                "plaintext": "store-only roundtrip",
+                "recipient_key_store_name": "rt-recipient",
+            }
+        )["envelope"]
+        result = handle_hybrid_open(
+            {
+                "envelope": envelope,
+                "key_store_name": "rt-recipient",
+            }
+        )
+        assert result["plaintext"] == "store-only roundtrip"
+
+    def test_auth_seal_open_no_raw_keys(self):
+        """Authenticated roundtrip with zero raw keys except sender binding."""
+        full_keys = hybrid_keygen()
+        store_from_keygen("art-r", full_keys, overwrite=True)
+        sender_keys = handle_generate_keypair({"algorithm": "ML-DSA-65"})
+        store_from_keygen("art-s", sender_keys, overwrite=True)
+        fp = _fingerprint_public_key(base64.b64decode(sender_keys["public_key"]))
+        envelope = handle_hybrid_auth_seal(
+            {
+                "plaintext": "auth store roundtrip",
+                "recipient_key_store_name": "art-r",
+                "sender_key_store_name": "art-s",
+            }
+        )["envelope"]
+        result = handle_hybrid_auth_open(
+            {
+                "envelope": envelope,
+                "key_store_name": "art-r",
+                "expected_sender_fingerprint": fp,
+            }
+        )
+        assert result["plaintext"] == "auth store roundtrip"
+        assert result["authenticated"] is True
