@@ -19,6 +19,7 @@ import asyncio
 try:
     import oqs
     from oqs import MechanismNotSupportedError, MechanismNotEnabledError
+
     HAS_LIBOQS = True
 except ImportError:
     HAS_LIBOQS = False
@@ -89,10 +90,10 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "enum": ["all", "kem", "sig"],
                         "description": "Filter by algorithm type: 'kem' for key encapsulation, 'sig' for signatures, 'all' for both",
-                        "default": "all"
+                        "default": "all",
                     }
-                }
-            }
+                },
+            },
         ),
         Tool(
             name="pqc_algorithm_info",
@@ -102,11 +103,11 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "algorithm": {
                         "type": "string",
-                        "description": "Algorithm name (e.g., 'ML-KEM-768', 'ML-DSA-65', 'SPHINCS+-SHA2-128f-simple')"
+                        "description": "Algorithm name (e.g., 'ML-KEM-768', 'ML-DSA-65', 'SPHINCS+-SHA2-128f-simple')",
                     }
                 },
-                "required": ["algorithm"]
-            }
+                "required": ["algorithm"],
+            },
         ),
         Tool(
             name="pqc_generate_keypair",
@@ -116,11 +117,11 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "algorithm": {
                         "type": "string",
-                        "description": "Algorithm name (e.g., 'ML-KEM-768', 'ML-DSA-65')"
+                        "description": "Algorithm name (e.g., 'ML-KEM-768', 'ML-DSA-65')",
                     }
                 },
-                "required": ["algorithm"]
-            }
+                "required": ["algorithm"],
+            },
         ),
         Tool(
             name="pqc_encapsulate",
@@ -128,17 +129,11 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "algorithm": {
-                        "type": "string",
-                        "description": "KEM algorithm name"
-                    },
-                    "public_key": {
-                        "type": "string",
-                        "description": "Base64-encoded public key"
-                    }
+                    "algorithm": {"type": "string", "description": "KEM algorithm name"},
+                    "public_key": {"type": "string", "description": "Base64-encoded public key"},
                 },
-                "required": ["algorithm", "public_key"]
-            }
+                "required": ["algorithm", "public_key"],
+            },
         ),
         Tool(
             name="pqc_decapsulate",
@@ -146,21 +141,15 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "algorithm": {
-                        "type": "string",
-                        "description": "KEM algorithm name"
-                    },
-                    "secret_key": {
-                        "type": "string",
-                        "description": "Base64-encoded secret key"
-                    },
+                    "algorithm": {"type": "string", "description": "KEM algorithm name"},
+                    "secret_key": {"type": "string", "description": "Base64-encoded secret key"},
                     "ciphertext": {
                         "type": "string",
-                        "description": "Base64-encoded ciphertext from encapsulation"
-                    }
+                        "description": "Base64-encoded ciphertext from encapsulation",
+                    },
                 },
-                "required": ["algorithm", "secret_key", "ciphertext"]
-            }
+                "required": ["algorithm", "secret_key", "ciphertext"],
+            },
         ),
         Tool(
             name="pqc_sign",
@@ -170,19 +159,19 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "algorithm": {
                         "type": "string",
-                        "description": "Signature algorithm name (e.g., 'ML-DSA-65')"
+                        "description": "Signature algorithm name (e.g., 'ML-DSA-65')",
                     },
                     "secret_key": {
                         "type": "string",
-                        "description": "Base64-encoded secret/signing key"
+                        "description": "Base64-encoded secret/signing key",
                     },
                     "message": {
                         "type": "string",
-                        "description": "Message to sign (will be UTF-8 encoded)"
-                    }
+                        "description": "Message to sign (will be UTF-8 encoded)",
+                    },
                 },
-                "required": ["algorithm", "secret_key", "message"]
-            }
+                "required": ["algorithm", "secret_key", "message"],
+            },
         ),
         Tool(
             name="pqc_verify",
@@ -190,25 +179,16 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "algorithm": {
-                        "type": "string",
-                        "description": "Signature algorithm name"
-                    },
+                    "algorithm": {"type": "string", "description": "Signature algorithm name"},
                     "public_key": {
                         "type": "string",
-                        "description": "Base64-encoded public/verification key"
+                        "description": "Base64-encoded public/verification key",
                     },
-                    "message": {
-                        "type": "string",
-                        "description": "Original message"
-                    },
-                    "signature": {
-                        "type": "string",
-                        "description": "Base64-encoded signature"
-                    }
+                    "message": {"type": "string", "description": "Original message"},
+                    "signature": {"type": "string", "description": "Base64-encoded signature"},
                 },
-                "required": ["algorithm", "public_key", "message", "signature"]
-            }
+                "required": ["algorithm", "public_key", "message", "signature"],
+            },
         ),
         Tool(
             name="pqc_hash_to_curve",
@@ -216,18 +196,15 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "Message to hash"
-                    },
+                    "message": {"type": "string", "description": "Message to hash"},
                     "algorithm": {
                         "type": "string",
                         "enum": ["SHA3-256", "SHA3-512", "SHAKE128", "SHAKE256"],
-                        "default": "SHA3-256"
-                    }
+                        "default": "SHA3-256",
+                    },
                 },
-                "required": ["message"]
-            }
+                "required": ["message"],
+            },
         ),
         Tool(
             name="pqc_security_analysis",
@@ -235,13 +212,10 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "algorithm": {
-                        "type": "string",
-                        "description": "Algorithm to analyze"
-                    }
+                    "algorithm": {"type": "string", "description": "Algorithm to analyze"}
                 },
-                "required": ["algorithm"]
-            }
+                "required": ["algorithm"],
+            },
         ),
     ]
 
@@ -251,14 +225,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Handle tool calls."""
 
     if not HAS_LIBOQS:
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "error": "liboqs not installed",
-                "install": "pip install liboqs-python",
-                "docs": "https://github.com/open-quantum-safe/liboqs-python"
-            }, indent=2)
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "error": "liboqs not installed",
+                        "install": "pip install liboqs-python",
+                        "docs": "https://github.com/open-quantum-safe/liboqs-python",
+                    },
+                    indent=2,
+                ),
+            )
+        ]
 
     try:
         if name == "pqc_list_algorithms":
@@ -275,7 +254,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 "ML-KEM": "FIPS 203 (formerly CRYSTALS-Kyber)",
                 "ML-DSA": "FIPS 204 (formerly CRYSTALS-Dilithium)",
                 "SLH-DSA": "FIPS 205 (formerly SPHINCS+)",
-                "HQC": "Round 4 finalist, standardization in progress"
+                "HQC": "Round 4 finalist, standardization in progress",
             }
 
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
@@ -316,7 +295,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             except MechanismNotSupportedError:
                 pass
 
-            return [TextContent(type="text", text=json.dumps({"error": f"Unknown algorithm: {alg}"}, indent=2))]
+            return [
+                TextContent(
+                    type="text", text=json.dumps({"error": f"Unknown algorithm: {alg}"}, indent=2)
+                )
+            ]
 
         elif name == "pqc_generate_keypair":
             alg = arguments["algorithm"]
@@ -473,7 +456,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     alg_type = "Signature"
                     details = sig.details
                 except MechanismNotSupportedError:
-                    return [TextContent(type="text", text=json.dumps({"error": f"Unknown algorithm: {alg}"}, indent=2))]
+                    return [
+                        TextContent(
+                            type="text",
+                            text=json.dumps({"error": f"Unknown algorithm: {alg}"}, indent=2),
+                        )
+                    ]
 
             level_info = security_levels.get(nist_level, security_levels[3])
 
@@ -487,12 +475,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 "quantum_resistant": True,
                 "grover_resistance": f"Grover's algorithm reduces security by ~50% to {level_info['bits']//2} bits",
                 "shor_resistance": "Resistant to Shor's algorithm (not based on factoring/DLP)",
-                "recommendation": "NIST approved for post-quantum security" if nist_level else "Experimental",
+                "recommendation": (
+                    "NIST approved for post-quantum security" if nist_level else "Experimental"
+                ),
             }
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         else:
-            return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}, indent=2))]
+            return [
+                TextContent(
+                    type="text", text=json.dumps({"error": f"Unknown tool: {name}"}, indent=2)
+                )
+            ]
 
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]

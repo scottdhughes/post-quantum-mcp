@@ -5,7 +5,6 @@ import pytest
 
 from pqc_mcp_server import server, HAS_LIBOQS
 
-
 EXPECTED_TOOLS = [
     "pqc_list_algorithms",
     "pqc_algorithm_info",

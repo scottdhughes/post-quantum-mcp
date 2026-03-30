@@ -9,7 +9,6 @@ import pytest
 
 from tests.conftest import requires_liboqs
 
-
 SIG_ALGORITHMS = ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]
 
 

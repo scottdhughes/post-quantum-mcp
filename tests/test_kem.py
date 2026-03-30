@@ -9,7 +9,6 @@ import pytest
 
 from tests.conftest import requires_liboqs
 
-
 KEM_ALGORITHMS = ["ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"]
 
 
