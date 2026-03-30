@@ -1,6 +1,6 @@
 [project]
 name = "post-quantum-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server for post-quantum cryptography using liboqs - ML-KEM, ML-DSA, SPHINCS+, Falcon"
 readme = "README.md"
 license = {text = "MIT"}
