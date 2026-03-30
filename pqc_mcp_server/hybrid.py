@@ -6,10 +6,14 @@ Borrows the KEM combiner from the LAMPS composite ML-KEM draft
 (id-MLKEM768-X25519-SHA3-256). The sealed-envelope layer is this
 project's own protocol built on top of that combiner.
 
-This is an anonymous sealed-box construction providing hybrid confidentiality
-with ciphertext integrity. It is NOT forward-secret against recipient key
-compromise, and it is NOT authenticated (anyone with recipient public keys
-can seal an envelope).
+Two envelope modes:
+- Anonymous sealed-box (hybrid_seal/hybrid_open): anyone with recipient public
+  keys can seal. No sender authentication.
+- Sender-authenticated sealed-envelope (hybrid_auth_seal/hybrid_auth_open):
+  sender signs a canonical transcript with ML-DSA-65 before encryption.
+  Recipient must supply expected sender identity to verify.
+
+Neither mode is forward-secret against later recipient key compromise.
 
 liboqs is research/prototyping software and is not recommended for production.
 """
@@ -38,6 +42,8 @@ import oqs
 SUITE = "mlkem768-x25519-sha3-256"
 COMBINER_LABEL = b"\x5c\x2e\x2f\x2f\x5e\x5c"  # \.//^\ — LAMPS id-MLKEM768-X25519-SHA3-256
 _HKDF_INFO_PREFIX = b"pqc-mcp-v1|mlkem768-x25519-sha3-256|"
+DEFAULT_SIG_ALGORITHM = "ML-DSA-65"
+_AUTH_TRANSCRIPT_PREFIX = b"pqc-mcp-auth-v1\x00"  # 16 bytes, null-terminated
 
 
 def _validate_x25519_key(key_bytes: bytes, label: str) -> None:
@@ -88,6 +94,51 @@ def _build_aad(epk_x25519: bytes, pqc_ciphertext: bytes) -> bytes:
     Total prefix before epk: 36 bytes.
     """
     return b"pqc-mcp-v1" + b"|mlkem768-x25519-sha3-256|" + epk_x25519 + pqc_ciphertext
+
+
+class SenderVerificationError(Exception):
+    """Raised when sender identity or signature verification fails."""
+
+
+def _fingerprint_public_key(public_key_bytes: bytes) -> str:
+    """SHA3-256 fingerprint of a public key, returned as lowercase hex."""
+    return hashlib.sha3_256(public_key_bytes).hexdigest()
+
+
+def _len_prefix(data: bytes) -> bytes:
+    """4-byte big-endian length prefix + raw bytes."""
+    return len(data).to_bytes(4, "big") + data
+
+
+def _build_auth_transcript(
+    version: bytes,
+    suite: bytes,
+    sig_algorithm: bytes,
+    sender_pk: bytes,
+    sender_fp: bytes,
+    recipient_classical_fp: bytes,
+    recipient_pqc_fp: bytes,
+    epk_x25519: bytes,
+    pqc_ciphertext: bytes,
+    aead_ciphertext: bytes,
+) -> bytes:
+    """Build canonical binary transcript for authenticated envelope signature.
+
+    Fixed domain prefix + length-prefixed fields. Deterministic and unambiguous.
+    """
+    return (
+        _AUTH_TRANSCRIPT_PREFIX
+        + _len_prefix(version)
+        + _len_prefix(suite)
+        + _len_prefix(sig_algorithm)
+        + _len_prefix(sender_pk)
+        + _len_prefix(sender_fp)
+        + _len_prefix(recipient_classical_fp)
+        + _len_prefix(recipient_pqc_fp)
+        + _len_prefix(epk_x25519)
+        + _len_prefix(pqc_ciphertext)
+        + _len_prefix(aead_ciphertext)
+    )
 
 
 def hybrid_keygen() -> dict[str, Any]:
@@ -276,3 +327,155 @@ def hybrid_open(
         "plaintext": plaintext_str,
         "plaintext_base64": base64.b64encode(plaintext_bytes).decode(),
     }
+
+
+def hybrid_auth_seal(
+    plaintext_bytes: bytes,
+    recipient_classical_pk: bytes,
+    recipient_pqc_pk: bytes,
+    sender_sig_sk: bytes,
+    sender_sig_pk: bytes,
+    sender_sig_algorithm: str = DEFAULT_SIG_ALGORITHM,
+) -> dict[str, Any]:
+    """Encrypt + sign: sender-authenticated hybrid sealed envelope.
+
+    Composes the existing anonymous seal, then signs a canonical transcript
+    covering the entire envelope. The signature proves sender identity.
+    Still not forward-secret against later recipient key compromise.
+    """
+    # Seal (anonymous confidentiality layer — reuse existing core)
+    envelope = hybrid_seal(plaintext_bytes, recipient_classical_pk, recipient_pqc_pk)
+
+    # Compute fingerprints
+    sender_fp = _fingerprint_public_key(sender_sig_pk)
+    recipient_classical_fp = _fingerprint_public_key(recipient_classical_pk)
+    recipient_pqc_fp = _fingerprint_public_key(recipient_pqc_pk)
+
+    epk_bytes = base64.b64decode(envelope["x25519_ephemeral_public_key"])
+    pqc_ct_bytes = base64.b64decode(envelope["pqc_ciphertext"])
+    aead_ct_bytes = base64.b64decode(envelope["ciphertext"])
+
+    # Build canonical transcript
+    transcript = _build_auth_transcript(
+        version=envelope["version"].encode(),
+        suite=envelope["suite"].encode(),
+        sig_algorithm=sender_sig_algorithm.encode(),
+        sender_pk=sender_sig_pk,
+        sender_fp=sender_fp.encode(),
+        recipient_classical_fp=recipient_classical_fp.encode(),
+        recipient_pqc_fp=recipient_pqc_fp.encode(),
+        epk_x25519=epk_bytes,
+        pqc_ciphertext=pqc_ct_bytes,
+        aead_ciphertext=aead_ct_bytes,
+    )
+
+    # Sign transcript with ML-DSA
+    sig = oqs.Signature(sender_sig_algorithm, sender_sig_sk)
+    signature = sig.sign(transcript)
+
+    return {
+        "version": envelope["version"],
+        "suite": envelope["suite"],
+        "sender_signature_algorithm": sender_sig_algorithm,
+        "sender_public_key": base64.b64encode(sender_sig_pk).decode(),
+        "sender_key_fingerprint": sender_fp,
+        "recipient_classical_key_fingerprint": recipient_classical_fp,
+        "recipient_pqc_key_fingerprint": recipient_pqc_fp,
+        "x25519_ephemeral_public_key": envelope["x25519_ephemeral_public_key"],
+        "pqc_ciphertext": envelope["pqc_ciphertext"],
+        "ciphertext": envelope["ciphertext"],
+        "signature": base64.b64encode(signature).decode(),
+    }
+
+
+def hybrid_auth_open(
+    envelope: dict[str, Any],
+    classical_sk: bytes,
+    pqc_sk: bytes,
+    expected_sender_public_key: bytes | None = None,
+    expected_sender_fingerprint: str | None = None,
+) -> dict[str, Any]:
+    """Verify sender + decrypt: authenticated hybrid envelope.
+
+    Sender verification happens BEFORE decryption. If the signature is
+    invalid, the AEAD layer is never reached.
+
+    Exactly one of expected_sender_public_key or expected_sender_fingerprint
+    must be provided. The recipient must NOT trust the envelope's embedded
+    sender key by itself.
+    """
+    # Require exactly one sender binding
+    if expected_sender_public_key is None and expected_sender_fingerprint is None:
+        raise SenderVerificationError(
+            "Must provide expected_sender_public_key or expected_sender_fingerprint"
+        )
+    if expected_sender_public_key is not None and expected_sender_fingerprint is not None:
+        raise SenderVerificationError(
+            "Provide exactly one of expected_sender_public_key or expected_sender_fingerprint, not both"
+        )
+
+    # Validate header fields
+    if envelope.get("version") != "pqc-mcp-v1":
+        raise ValueError(f"Unsupported envelope version: {envelope.get('version')}")
+    if envelope.get("suite") != SUITE:
+        raise ValueError(f"Unsupported envelope suite: {envelope.get('suite')}")
+    sig_alg = envelope.get("sender_signature_algorithm", "")
+    if sig_alg != DEFAULT_SIG_ALGORITHM:
+        raise ValueError(f"Unsupported sender signature algorithm: {sig_alg}")
+
+    # Decode sender public key from envelope
+    sender_pk = base64.b64decode(envelope["sender_public_key"], validate=True)
+    envelope_fp = envelope["sender_key_fingerprint"]
+
+    # Verify sender binding BEFORE signature verification
+    if expected_sender_public_key is not None:
+        if sender_pk != expected_sender_public_key:
+            raise SenderVerificationError("Sender public key does not match expected key")
+    else:
+        assert expected_sender_fingerprint is not None
+        if envelope_fp != expected_sender_fingerprint:
+            raise SenderVerificationError(
+                "Sender key fingerprint does not match expected fingerprint"
+            )
+
+    # Decode envelope fields for transcript reconstruction
+    epk_bytes = base64.b64decode(envelope["x25519_ephemeral_public_key"], validate=True)
+    pqc_ct_bytes = base64.b64decode(envelope["pqc_ciphertext"], validate=True)
+    aead_ct_bytes = base64.b64decode(envelope["ciphertext"], validate=True)
+    signature = base64.b64decode(envelope["signature"], validate=True)
+
+    # Reconstruct canonical transcript
+    transcript = _build_auth_transcript(
+        version=envelope["version"].encode(),
+        suite=envelope["suite"].encode(),
+        sig_algorithm=sig_alg.encode(),
+        sender_pk=sender_pk,
+        sender_fp=envelope_fp.encode(),
+        recipient_classical_fp=envelope["recipient_classical_key_fingerprint"].encode(),
+        recipient_pqc_fp=envelope["recipient_pqc_key_fingerprint"].encode(),
+        epk_x25519=epk_bytes,
+        pqc_ciphertext=pqc_ct_bytes,
+        aead_ciphertext=aead_ct_bytes,
+    )
+
+    # Verify signature BEFORE decryption
+    sig_verifier = oqs.Signature(sig_alg)
+    is_valid = sig_verifier.verify(transcript, signature, sender_pk)
+    if not is_valid:
+        raise SenderVerificationError("Signature verification failed")
+
+    # Signature valid — now decrypt via the existing anonymous open path
+    # Build the inner anonymous envelope for hybrid_open
+    inner_envelope = {
+        "version": envelope["version"],
+        "suite": envelope["suite"],
+        "x25519_ephemeral_public_key": envelope["x25519_ephemeral_public_key"],
+        "pqc_ciphertext": envelope["pqc_ciphertext"],
+        "ciphertext": envelope["ciphertext"],
+    }
+    result = hybrid_open(inner_envelope, classical_sk, pqc_sk)
+
+    result["sender_key_fingerprint"] = envelope_fp
+    result["sender_signature_algorithm"] = sig_alg
+    result["authenticated"] = True
+    return result
