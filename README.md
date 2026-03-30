@@ -61,12 +61,8 @@ sudo apt-get install liboqs-dev
 git clone https://github.com/scottdhughes/post-quantum-mcp.git
 cd post-quantum-mcp
 
-# Create virtual environment with Python 3.10+
-uv venv --python 3.10 .venv
-source .venv/bin/activate
-
-# Install dependencies
-uv pip install liboqs-python "mcp>=1.0.0"
+# Install all dependencies (creates .venv automatically)
+uv sync --all-extras
 ```
 
 #### 3. Configure Claude Code / Claude Desktop
@@ -229,7 +225,7 @@ Once configured, you can ask Claude:
 
 > "Sign the message 'Hello quantum world' using ML-DSA-65 and verify it"
 
-> "Compare the signature sizes of Falcon-512 vs SPHINCS+-SHA2-128f"
+> "Compare the signature sizes of Falcon-512 vs SLH-DSA-SHA2-128f"
 
 > "What's the quantum security level of ML-KEM-1024?"
 
@@ -238,31 +234,38 @@ Once configured, you can ask Claude:
 ```
 post-quantum-mcp/
 ├── pqc_mcp_server/
-│   ├── __init__.py      # Main MCP server implementation
-│   └── __main__.py      # Entry point
-├── run.sh               # Wrapper script (sets DYLD_LIBRARY_PATH)
+│   ├── __init__.py      # MCP server + tool handlers
+│   ├── __main__.py      # Entry point
+│   └── hybrid.py        # Hybrid X25519 + ML-KEM-768 crypto (suite: mlkem768-x25519-sha3-256)
+├── tests/               # 73 tests (KEM, signatures, hashing, hybrid, MCP handlers)
+├── .github/workflows/   # CI pipeline (Python 3.10-3.13 × Ubuntu/macOS)
+├── run.sh               # Wrapper script (sets library paths, finds venv)
 ├── pyproject.toml       # Package configuration
+├── uv.lock              # Cross-platform lockfile
+├── CHANGELOG.md
 └── README.md
 ```
 
 ## Security Considerations
 
-- **Key Storage**: This server generates keys in memory. For production use, implement secure key storage.
+- **Not for production.** liboqs is research/prototyping software. Secret material appears in tool output.
+- **Key Storage**: Keys are generated in memory and returned in tool output. No persistent key storage.
 - **Side Channels**: liboqs implementations aim to be constant-time but may not be suitable for all threat models.
-- **Algorithm Selection**: ML-KEM and ML-DSA are NIST-approved. Other algorithms are experimental.
-- **Version Compatibility**: Ensure liboqs version matches liboqs-python expectations.
+- **Algorithm Selection**: ML-KEM and ML-DSA are NIST-standardized. Other algorithms are experimental.
+- **Hybrid Scheme**: The sealed-envelope layer is anonymous (not sender-authenticated) and not forward-secret against recipient key compromise.
+- **Version Compatibility**: Tested with liboqs 0.15.0 + liboqs-python 0.14.1. Version skew may produce warnings.
 
 ## Development
 
 ```bash
 # Run tests
-python -m pytest tests/
+uv run pytest tests/ -v
 
 # Format code
-python -m black pqc_mcp_server/
+uv run black pqc_mcp_server/ tests/
 
 # Type checking
-python -m mypy pqc_mcp_server/
+uv run mypy pqc_mcp_server/
 ```
 
 ## Related Projects
