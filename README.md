@@ -191,6 +191,33 @@ Encrypt/decrypt plaintext using hybrid encapsulation + AES-256-GCM. Full-header 
 
 > "Encrypt 'classified data' using hybrid PQC and then decrypt it"
 
+## Authenticated Hybrid Envelopes
+
+Adds sender authentication to the hybrid confidentiality layer using ML-DSA-65 (FIPS 204) signatures. The sender signs a canonical binary transcript covering the entire envelope. The recipient verifies sender identity before decryption.
+
+This is a **sender-authenticated sealed-envelope** construction. It is still not forward-secret against later recipient long-term key compromise. The sealed-envelope layer is this project's own protocol.
+
+### `pqc_hybrid_auth_seal`
+Encrypt + sign. Requires sender ML-DSA-65 signing keys + recipient hybrid keys.
+
+### `pqc_hybrid_auth_open`
+Verify sender + decrypt. Requires either `expected_sender_public_key` or `expected_sender_fingerprint`. Signature is verified before decryption — auth failures are distinct from decrypt failures.
+
+### Key Generation Flow
+```
+1. Sender: generate ML-DSA-65 signing keys via pqc_generate_keypair
+2. Recipient: generate hybrid keys via pqc_hybrid_keygen
+3. Exchange public keys out-of-band
+4. Sender: pqc_hybrid_auth_seal with both key sets
+5. Recipient: pqc_hybrid_auth_open with expected sender identity
+```
+
+### Example Authenticated Usage
+
+> "Generate an ML-DSA-65 signing keypair and a hybrid recipient keypair, then send an authenticated encrypted message"
+
+> "Open this authenticated envelope and verify it came from the expected sender"
+
 ## Supported Algorithms
 
 > **Note:** Legacy algorithm names (Kyber, Dilithium, SPHINCS+) are accepted as aliases for compatibility with older liboqs versions.
@@ -236,7 +263,7 @@ post-quantum-mcp/
 ├── pqc_mcp_server/
 │   ├── __init__.py      # MCP server + tool handlers
 │   ├── __main__.py      # Entry point
-│   └── hybrid.py        # Hybrid X25519 + ML-KEM-768 crypto (suite: mlkem768-x25519-sha3-256)
+│   └── hybrid.py        # Hybrid X25519 + ML-KEM-768 crypto + authenticated envelopes (ML-DSA-65)
 ├── tests/               # 73 tests (KEM, signatures, hashing, hybrid, MCP handlers)
 ├── .github/workflows/   # CI pipeline (Python 3.10-3.13 × Ubuntu/macOS)
 ├── run.sh               # Wrapper script (sets library paths, finds venv)

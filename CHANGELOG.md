@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Sender-authenticated hybrid envelopes: `pqc_hybrid_auth_seal`, `pqc_hybrid_auth_open`
+- ML-DSA-65 (FIPS 204) signature over canonical binary transcript
+- Sender identity binding via `expected_sender_public_key` or `expected_sender_fingerprint`
+- SHA3-256 public key fingerprinting helper
+- Canonical length-prefixed binary transcript for signature input
+- `SenderVerificationError` distinct from `InvalidTag` for clear error separation
+- Signature verified before decryption (verify-then-decrypt ordering)
+
 ## [0.2.0] - 2026-03-30
 
 ### Added
