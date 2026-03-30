@@ -3,6 +3,7 @@
 import json
 import pytest
 
+from mcp.types import ListToolsRequest
 from pqc_mcp_server import server, HAS_LIBOQS
 
 EXPECTED_TOOLS = [
@@ -18,9 +19,18 @@ EXPECTED_TOOLS = [
 ]
 
 
+async def _list_tools():
+    """Get tool list via the MCP request handler."""
+    req = ListToolsRequest(method="tools/list")
+    handler = server.request_handlers.get(type(req))
+    assert handler is not None
+    result = await handler(req)
+    return result.root.tools if hasattr(result, "root") else result.tools
+
+
 @pytest.mark.asyncio
 async def test_list_tools_returns_all_expected():
-    tools = await server.list_tools()
+    tools = await _list_tools()
     names = [t.name for t in tools]
     for expected in EXPECTED_TOOLS:
         assert expected in names, f"Missing tool: {expected}"
@@ -28,7 +38,7 @@ async def test_list_tools_returns_all_expected():
 
 @pytest.mark.asyncio
 async def test_list_tools_have_input_schemas():
-    tools = await server.list_tools()
+    tools = await _list_tools()
     for tool in tools:
         assert tool.inputSchema is not None
         assert tool.inputSchema["type"] == "object"

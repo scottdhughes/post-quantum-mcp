@@ -473,7 +473,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 "quantum_security": level_info["quantum"],
                 "security_bits": level_info["bits"],
                 "quantum_resistant": True,
-                "grover_resistance": f"Grover's algorithm reduces security by ~50% to {level_info['bits']//2} bits",
+                "grover_resistance": f"Grover's algorithm reduces security by ~50% to {int(level_info['bits'])//2} bits",
                 "shor_resistance": "Resistant to Shor's algorithm (not based on factoring/DLP)",
                 "recommendation": (
                     "NIST approved for post-quantum security" if nist_level else "Experimental"
