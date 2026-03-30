@@ -579,6 +579,7 @@ name = "post-quantum-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "liboqs-python" },
     { name = "mcp" },
 ]
@@ -594,6 +595,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
+    { name = "cryptography", specifier = ">=42.0.0" },
     { name = "liboqs-python", specifier = ">=0.10.0" },
     { name = "mcp", specifier = ">=1.6.0,<2.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
