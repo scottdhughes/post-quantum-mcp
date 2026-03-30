@@ -177,13 +177,67 @@ This is an **anonymous sealed-box** construction providing hybrid confidentialit
 ### `pqc_hybrid_keygen`
 Generate a hybrid keypair bundle. No parameters needed.
 
+```json
+// Input
+{}
+
+// Output
+{
+  "suite": "mlkem768-x25519-sha3-256",
+  "classical": {
+    "algorithm": "X25519",
+    "public_key": "DeRN3xLbEglMdXKO7P98cAvc...",
+    "secret_key": "YEYD9j5c2hpTei0ferXWbAFb..."
+  },
+  "pqc": {
+    "algorithm": "ML-KEM-768",
+    "public_key": "gDsL8UgEVcMeJgUOQgSlAotx...",
+    "secret_key": "MQB2U0EzNGmloLuiTYG3BTcr..."
+  }
+}
+```
+
 ### `pqc_hybrid_encap` / `pqc_hybrid_decap`
 Building-block key encapsulation. Returns a combined shared secret derived via the suite's SHA3-256 combiner.
 
 ### `pqc_hybrid_seal` / `pqc_hybrid_open`
 Encrypt/decrypt plaintext using hybrid encapsulation + AES-256-GCM. Full-header AAD binding. Deterministic nonce (not transmitted in envelope).
 
-### Example Hybrid Usage
+```json
+// Seal input
+{
+  "plaintext": "Hello, quantum world!",
+  "recipient_classical_public_key": "<base64 X25519 public key>",
+  "recipient_pqc_public_key": "<base64 ML-KEM-768 public key>"
+}
+
+// Seal output
+{
+  "envelope": {
+    "version": "pqc-mcp-v1",
+    "suite": "mlkem768-x25519-sha3-256",
+    "x25519_ephemeral_public_key": "6+b1Y8AkgEycKL5wL2cIeSMv...",
+    "pqc_ciphertext": "DF+PYy4zx+OmnW8wLD3EL+4M...",
+    "ciphertext": "NnEap2fDq5+xTCwvHdKfy5Xj..."
+  }
+}
+
+// Open input
+{
+  "envelope": { "...envelope from seal..." },
+  "classical_secret_key": "<base64 X25519 secret key>",
+  "pqc_secret_key": "<base64 ML-KEM-768 secret key>"
+}
+
+// Open output
+{
+  "suite": "mlkem768-x25519-sha3-256",
+  "plaintext": "Hello, quantum world!",
+  "plaintext_base64": "SGVsbG8sIHF1YW50dW0gd29ybGQh"
+}
+```
+
+### Example Hybrid Prompts
 
 > "Generate a hybrid keypair and seal a message for me"
 
@@ -200,8 +254,64 @@ This is a **sender-authenticated sealed-envelope** construction. It is still not
 ### `pqc_hybrid_auth_seal`
 Encrypt + sign. Requires sender ML-DSA-65 signing keys + recipient hybrid keys.
 
+```json
+// Input
+{
+  "plaintext": "Authenticated message",
+  "recipient_classical_public_key": "<base64 X25519 public key>",
+  "recipient_pqc_public_key": "<base64 ML-KEM-768 public key>",
+  "sender_secret_key": "<base64 ML-DSA-65 secret key>",
+  "sender_public_key": "<base64 ML-DSA-65 public key>"
+}
+
+// Output
+{
+  "envelope": {
+    "version": "pqc-mcp-v1",
+    "suite": "mlkem768-x25519-sha3-256",
+    "sender_signature_algorithm": "ML-DSA-65",
+    "sender_public_key": "0ji6POTItnZUX8rELwVwWSOV...",
+    "sender_key_fingerprint": "0f617ece2f1d04c0...",
+    "recipient_classical_key_fingerprint": "c1deade4a5300a9a...",
+    "recipient_pqc_key_fingerprint": "bb0e084213d6ac74...",
+    "x25519_ephemeral_public_key": "5LEikNANeJNhZSiq...",
+    "pqc_ciphertext": "ybgWc3ruG3JwXmr4...",
+    "ciphertext": "6OYdADdh0eH/LviD...",
+    "signature": "BOniPALs1kfhWcRh..."
+  }
+}
+```
+
 ### `pqc_hybrid_auth_open`
 Verify sender + decrypt. Requires either `expected_sender_public_key` or `expected_sender_fingerprint`. Signature is verified before decryption — auth failures are distinct from decrypt failures.
+
+```json
+// Open with expected sender public key
+{
+  "envelope": { "...envelope from auth_seal..." },
+  "classical_secret_key": "<base64 X25519 secret key>",
+  "pqc_secret_key": "<base64 ML-KEM-768 secret key>",
+  "expected_sender_public_key": "<base64 ML-DSA-65 public key>"
+}
+
+// Or open with expected sender fingerprint
+{
+  "envelope": { "...envelope from auth_seal..." },
+  "classical_secret_key": "...",
+  "pqc_secret_key": "...",
+  "expected_sender_fingerprint": "0f617ece2f1d04c0481aa0fe..."
+}
+
+// Output
+{
+  "suite": "mlkem768-x25519-sha3-256",
+  "plaintext": "Authenticated message",
+  "plaintext_base64": "QXV0aGVudGljYXRlZCBtZXNzYWdl",
+  "sender_key_fingerprint": "0f617ece2f1d04c0481aa0fe...",
+  "sender_signature_algorithm": "ML-DSA-65",
+  "authenticated": true
+}
+```
 
 ### Key Generation Flow
 ```
@@ -212,11 +322,13 @@ Verify sender + decrypt. Requires either `expected_sender_public_key` or `expect
 5. Recipient: pqc_hybrid_auth_open with expected sender identity
 ```
 
-### Example Authenticated Usage
+### Example Authenticated Prompts
 
 > "Generate an ML-DSA-65 signing keypair and a hybrid recipient keypair, then send an authenticated encrypted message"
 
 > "Open this authenticated envelope and verify it came from the expected sender"
+
+> "Seal a message to Bob and sign it with my ML-DSA key, then have Bob open it using my fingerprint"
 
 ## Supported Algorithms
 
