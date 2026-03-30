@@ -207,7 +207,7 @@ In `tests/test_server.py`, change `"pqc_hash_to_curve"` to `"pqc_hash"` in `EXPE
 
 - [ ] **Step 4: Run tests**
 
-Run: `pytest tests/test_server.py -v`
+Run: `uv run pytest tests/test_server.py -v`
 Expected: all hash tests pass with new name
 
 - [ ] **Step 5: Commit**
@@ -358,7 +358,7 @@ class TestValidation:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_hybrid.py::TestValidation -v`
+Run: `uv run pytest tests/test_hybrid.py::TestValidation -v`
 Expected: ImportError — `hybrid` module doesn't exist yet
 
 - [ ] **Step 3: Write the validation helpers and combiner**
@@ -465,7 +465,7 @@ def _build_aad(epk_x25519: bytes, pqc_ciphertext: bytes) -> bytes:
 
 - [ ] **Step 4: Run validation tests**
 
-Run: `pytest tests/test_hybrid.py::TestValidation -v`
+Run: `uv run pytest tests/test_hybrid.py::TestValidation -v`
 Expected: all 5 pass
 
 - [ ] **Step 5: Commit**
@@ -575,7 +575,7 @@ class TestAAD:
 
 - [ ] **Step 2: Run tests**
 
-Run: `pytest tests/test_hybrid.py -v`
+Run: `uv run pytest tests/test_hybrid.py -v`
 Expected: all combiner, HKDF, and AAD tests pass
 
 - [ ] **Step 3: Commit**
@@ -627,7 +627,7 @@ class TestKeygen:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_hybrid.py::TestKeygen -v`
+Run: `uv run pytest tests/test_hybrid.py::TestKeygen -v`
 Expected: ImportError — `hybrid_keygen` not defined yet
 
 - [ ] **Step 3: Implement hybrid_keygen**
@@ -665,7 +665,7 @@ def hybrid_keygen() -> dict[str, Any]:
 
 - [ ] **Step 4: Run keygen tests**
 
-Run: `pytest tests/test_hybrid.py::TestKeygen -v`
+Run: `uv run pytest tests/test_hybrid.py::TestKeygen -v`
 Expected: all 4 pass
 
 - [ ] **Step 5: Commit**
@@ -733,7 +733,7 @@ class TestEncapDecap:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pytest tests/test_hybrid.py::TestEncapDecap -v`
+Run: `uv run pytest tests/test_hybrid.py::TestEncapDecap -v`
 Expected: ImportError — `hybrid_encap` not defined
 
 - [ ] **Step 3: Implement hybrid_encap and hybrid_decap**
@@ -805,7 +805,7 @@ def hybrid_decap(
 
 - [ ] **Step 4: Run encap/decap tests**
 
-Run: `pytest tests/test_hybrid.py::TestEncapDecap -v`
+Run: `uv run pytest tests/test_hybrid.py::TestEncapDecap -v`
 Expected: all 3 pass
 
 - [ ] **Step 5: Commit**
@@ -1002,7 +1002,7 @@ class TestSealOpen:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pytest tests/test_hybrid.py::TestSealOpen -v`
+Run: `uv run pytest tests/test_hybrid.py::TestSealOpen -v`
 Expected: ImportError — `hybrid_seal` not defined
 
 - [ ] **Step 3: Implement hybrid_seal and hybrid_open**
@@ -1110,12 +1110,12 @@ def hybrid_open(
 
 - [ ] **Step 4: Run seal/open tests**
 
-Run: `pytest tests/test_hybrid.py::TestSealOpen -v`
+Run: `uv run pytest tests/test_hybrid.py::TestSealOpen -v`
 Expected: all pass
 
 - [ ] **Step 5: Run all hybrid tests**
 
-Run: `pytest tests/test_hybrid.py -v`
+Run: `uv run pytest tests/test_hybrid.py -v`
 Expected: all tests pass (validation + combiner + hkdf + aad + keygen + encap/decap + seal/open)
 
 - [ ] **Step 6: Commit**
@@ -1310,7 +1310,7 @@ EXPECTED_TOOLS = [
 
 - [ ] **Step 5: Run all tests**
 
-Run: `pytest tests/ -v`
+Run: `uv run pytest tests/ -v`
 Expected: all tests pass
 
 - [ ] **Step 6: Commit**
@@ -1382,12 +1382,12 @@ git commit -m "docs: add hybrid key exchange to README and CHANGELOG"
 
 - [ ] **Step 1: Run full test suite**
 
-Run: `pytest tests/ -v --tb=short`
+Run: `uv run pytest tests/ -v --tb=short`
 Expected: all tests pass
 
 - [ ] **Step 2: Run black**
 
-Run: `python3 -m black --check pqc_mcp_server/ tests/`
+Run: `uv run black --check pqc_mcp_server/ tests/`
 Expected: clean (or fix formatting issues)
 
 - [ ] **Step 3: Verify git log**
