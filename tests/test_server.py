@@ -1,5 +1,6 @@
 """Tests for PQC MCP server tool registration and basic plumbing."""
 
+import base64
 import json
 import pytest
 
@@ -21,6 +22,8 @@ EXPECTED_TOOLS = [
     "pqc_hybrid_decap",
     "pqc_hybrid_seal",
     "pqc_hybrid_open",
+    "pqc_hybrid_auth_seal",
+    "pqc_hybrid_auth_open",
 ]
 
 
@@ -140,3 +143,162 @@ async def test_hybrid_encap_malformed_base64_returns_structured_error(call_tool)
     )
     assert "error" in result
     assert "Invalid base64" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_auth_seal_open_happy_path(call_tool):
+    """MCP handler: authenticated seal + open roundtrip."""
+    # Generate sender signing keys
+    sender = await call_tool("pqc_generate_keypair", {"algorithm": "ML-DSA-65"})
+    recipient = await call_tool("pqc_hybrid_keygen", {})
+
+    seal_result = await call_tool(
+        "pqc_hybrid_auth_seal",
+        {
+            "plaintext": "authenticated message",
+            "recipient_classical_public_key": recipient["classical"]["public_key"],
+            "recipient_pqc_public_key": recipient["pqc"]["public_key"],
+            "sender_secret_key": sender["secret_key"],
+            "sender_public_key": sender["public_key"],
+        },
+    )
+    assert "envelope" in seal_result
+    assert seal_result["envelope"]["sender_signature_algorithm"] == "ML-DSA-65"
+
+    open_result = await call_tool(
+        "pqc_hybrid_auth_open",
+        {
+            "envelope": seal_result["envelope"],
+            "classical_secret_key": recipient["classical"]["secret_key"],
+            "pqc_secret_key": recipient["pqc"]["secret_key"],
+            "expected_sender_public_key": sender["public_key"],
+        },
+    )
+    assert open_result["plaintext"] == "authenticated message"
+    assert open_result["authenticated"] is True
+
+
+@pytest.mark.asyncio
+async def test_hybrid_auth_open_wrong_sender_returns_structured_error(call_tool):
+    """MCP handler: wrong sender key returns structured JSON error."""
+    sender = await call_tool("pqc_generate_keypair", {"algorithm": "ML-DSA-65"})
+    other_sender = await call_tool("pqc_generate_keypair", {"algorithm": "ML-DSA-65"})
+    recipient = await call_tool("pqc_hybrid_keygen", {})
+
+    seal_result = await call_tool(
+        "pqc_hybrid_auth_seal",
+        {
+            "plaintext": "secret",
+            "recipient_classical_public_key": recipient["classical"]["public_key"],
+            "recipient_pqc_public_key": recipient["pqc"]["public_key"],
+            "sender_secret_key": sender["secret_key"],
+            "sender_public_key": sender["public_key"],
+        },
+    )
+    open_result = await call_tool(
+        "pqc_hybrid_auth_open",
+        {
+            "envelope": seal_result["envelope"],
+            "classical_secret_key": recipient["classical"]["secret_key"],
+            "pqc_secret_key": recipient["pqc"]["secret_key"],
+            "expected_sender_public_key": other_sender["public_key"],
+        },
+    )
+    assert "error" in open_result
+    assert "Sender verification failed" in open_result["error"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_auth_open_missing_sender_binding_returns_error(call_tool):
+    """MCP handler: missing sender identity returns structured JSON error."""
+    sender = await call_tool("pqc_generate_keypair", {"algorithm": "ML-DSA-65"})
+    recipient = await call_tool("pqc_hybrid_keygen", {})
+
+    seal_result = await call_tool(
+        "pqc_hybrid_auth_seal",
+        {
+            "plaintext": "test",
+            "recipient_classical_public_key": recipient["classical"]["public_key"],
+            "recipient_pqc_public_key": recipient["pqc"]["public_key"],
+            "sender_secret_key": sender["secret_key"],
+            "sender_public_key": sender["public_key"],
+        },
+    )
+    open_result = await call_tool(
+        "pqc_hybrid_auth_open",
+        {
+            "envelope": seal_result["envelope"],
+            "classical_secret_key": recipient["classical"]["secret_key"],
+            "pqc_secret_key": recipient["pqc"]["secret_key"],
+            # No expected_sender_public_key or expected_sender_fingerprint
+        },
+    )
+    assert "error" in open_result
+    assert "Sender verification failed" in open_result["error"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_auth_open_wrong_recipient_returns_decrypt_error(call_tool):
+    """MCP handler: wrong recipient key returns decrypt failure, not auth failure."""
+    sender = await call_tool("pqc_generate_keypair", {"algorithm": "ML-DSA-65"})
+    r1 = await call_tool("pqc_hybrid_keygen", {})
+    r2 = await call_tool("pqc_hybrid_keygen", {})
+
+    seal_result = await call_tool(
+        "pqc_hybrid_auth_seal",
+        {
+            "plaintext": "test",
+            "recipient_classical_public_key": r1["classical"]["public_key"],
+            "recipient_pqc_public_key": r1["pqc"]["public_key"],
+            "sender_secret_key": sender["secret_key"],
+            "sender_public_key": sender["public_key"],
+        },
+    )
+    open_result = await call_tool(
+        "pqc_hybrid_auth_open",
+        {
+            "envelope": seal_result["envelope"],
+            "classical_secret_key": r2["classical"]["secret_key"],
+            "pqc_secret_key": r2["pqc"]["secret_key"],
+            "expected_sender_public_key": sender["public_key"],
+        },
+    )
+    assert "error" in open_result
+    assert "Decryption failed" in open_result["error"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_auth_seal_malformed_base64_returns_error(call_tool):
+    """MCP handler: malformed base64 in auth_seal returns structured error."""
+    result = await call_tool(
+        "pqc_hybrid_auth_seal",
+        {
+            "plaintext": "test",
+            "recipient_classical_public_key": "not!valid###",
+            "recipient_pqc_public_key": "also!bad###",
+            "sender_secret_key": "bad!key###",
+            "sender_public_key": "bad!key###",
+        },
+    )
+    assert "error" in result
+    assert "Invalid base64" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_auth_seal_exactly_one_plaintext(call_tool):
+    """MCP handler: both plaintext and plaintext_base64 returns error."""
+    sender = await call_tool("pqc_generate_keypair", {"algorithm": "ML-DSA-65"})
+    recipient = await call_tool("pqc_hybrid_keygen", {})
+    result = await call_tool(
+        "pqc_hybrid_auth_seal",
+        {
+            "plaintext": "hello",
+            "plaintext_base64": base64.b64encode(b"hello").decode(),
+            "recipient_classical_public_key": recipient["classical"]["public_key"],
+            "recipient_pqc_public_key": recipient["pqc"]["public_key"],
+            "sender_secret_key": sender["secret_key"],
+            "sender_public_key": sender["public_key"],
+        },
+    )
+    assert "error" in result
+    assert "exactly one" in result["error"]

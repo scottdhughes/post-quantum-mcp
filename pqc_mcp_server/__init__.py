@@ -33,12 +33,17 @@ try:
         hybrid_decap,
         hybrid_seal,
         hybrid_open,
+        hybrid_auth_seal,
+        hybrid_auth_open,
+        SenderVerificationError,
         SUITE as HYBRID_SUITE,
+        DEFAULT_SIG_ALGORITHM as HYBRID_SIG_ALG,
     )
 
     HAS_HYBRID = True
 except ImportError:
     HAS_HYBRID = False
+    SenderVerificationError = Exception  # type: ignore[misc,assignment]
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -333,6 +338,75 @@ async def list_tools() -> list[Tool]:
                 "required": ["envelope", "classical_secret_key", "pqc_secret_key"],
             },
         ),
+        Tool(
+            name="pqc_hybrid_auth_seal",
+            description="Encrypt + sign: sender-authenticated hybrid sealed envelope using ML-DSA-65. Proves sender identity. Research/prototyping only.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "plaintext": {
+                        "type": "string",
+                        "description": "UTF-8 string to encrypt (mutually exclusive with plaintext_base64)",
+                    },
+                    "plaintext_base64": {
+                        "type": "string",
+                        "description": "Base64-encoded binary data (mutually exclusive with plaintext)",
+                    },
+                    "recipient_classical_public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded raw 32-byte X25519 public key",
+                    },
+                    "recipient_pqc_public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-KEM-768 public key",
+                    },
+                    "sender_secret_key": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-DSA-65 secret/signing key",
+                    },
+                    "sender_public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-DSA-65 public/verification key",
+                    },
+                },
+                "required": [
+                    "recipient_classical_public_key",
+                    "recipient_pqc_public_key",
+                    "sender_secret_key",
+                    "sender_public_key",
+                ],
+            },
+        ),
+        Tool(
+            name="pqc_hybrid_auth_open",
+            description="Verify sender + decrypt: authenticated hybrid envelope. Requires expected sender identity. Signature verified before decryption.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "envelope": {
+                        "type": "object",
+                        "description": "Authenticated envelope from pqc_hybrid_auth_seal",
+                    },
+                    "classical_secret_key": {
+                        "type": "string",
+                        "description": "Base64-encoded raw 32-byte X25519 secret key",
+                    },
+                    "pqc_secret_key": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-KEM-768 secret key",
+                    },
+                    "expected_sender_public_key": {
+                        "type": "string",
+                        "description": "Base64-encoded ML-DSA-65 public key (exactly one of this or expected_sender_fingerprint required)",
+                    },
+                    "expected_sender_fingerprint": {
+                        "type": "string",
+                        "description": "SHA3-256 hex fingerprint of sender public key (exactly one of this or expected_sender_public_key required)",
+                    },
+                },
+                "required": ["envelope", "classical_secret_key", "pqc_secret_key"],
+            },
+        ),
     ]
 
 
@@ -613,7 +687,14 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = hybrid_keygen()
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
-        elif name in ("pqc_hybrid_encap", "pqc_hybrid_decap", "pqc_hybrid_seal", "pqc_hybrid_open"):
+        elif name in (
+            "pqc_hybrid_encap",
+            "pqc_hybrid_decap",
+            "pqc_hybrid_seal",
+            "pqc_hybrid_open",
+            "pqc_hybrid_auth_seal",
+            "pqc_hybrid_auth_open",
+        ):
             if not HAS_HYBRID:
                 return [
                     TextContent(
@@ -682,11 +763,71 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                         TextContent(type="text", text=json.dumps({"envelope": envelope}, indent=2))
                     ]
 
-                else:  # name == "pqc_hybrid_open"
+                elif name == "pqc_hybrid_open":
                     result = hybrid_open(
                         arguments["envelope"],
                         base64.b64decode(arguments["classical_secret_key"], validate=True),
                         base64.b64decode(arguments["pqc_secret_key"], validate=True),
+                    )
+                    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+                elif name == "pqc_hybrid_auth_seal":
+                    if "plaintext" in arguments and "plaintext_base64" in arguments:
+                        return [
+                            TextContent(
+                                type="text",
+                                text=json.dumps(
+                                    {
+                                        "error": "Provide exactly one of plaintext or plaintext_base64, not both"
+                                    },
+                                    indent=2,
+                                ),
+                            )
+                        ]
+                    if "plaintext" in arguments:
+                        pt_bytes = arguments["plaintext"].encode("utf-8")
+                    elif "plaintext_base64" in arguments:
+                        pt_bytes = base64.b64decode(arguments["plaintext_base64"], validate=True)
+                    else:
+                        return [
+                            TextContent(
+                                type="text",
+                                text=json.dumps(
+                                    {"error": "Provide plaintext or plaintext_base64"}, indent=2
+                                ),
+                            )
+                        ]
+                    envelope = hybrid_auth_seal(
+                        pt_bytes,
+                        base64.b64decode(
+                            arguments["recipient_classical_public_key"], validate=True
+                        ),
+                        base64.b64decode(arguments["recipient_pqc_public_key"], validate=True),
+                        base64.b64decode(arguments["sender_secret_key"], validate=True),
+                        base64.b64decode(arguments["sender_public_key"], validate=True),
+                    )
+                    return [
+                        TextContent(
+                            type="text",
+                            text=json.dumps({"envelope": envelope}, indent=2),
+                        )
+                    ]
+
+                else:  # name == "pqc_hybrid_auth_open"
+                    expected_pk = None
+                    expected_fp = None
+                    if "expected_sender_public_key" in arguments:
+                        expected_pk = base64.b64decode(
+                            arguments["expected_sender_public_key"], validate=True
+                        )
+                    if "expected_sender_fingerprint" in arguments:
+                        expected_fp = arguments["expected_sender_fingerprint"]
+                    result = hybrid_auth_open(
+                        arguments["envelope"],
+                        base64.b64decode(arguments["classical_secret_key"], validate=True),
+                        base64.b64decode(arguments["pqc_secret_key"], validate=True),
+                        expected_sender_public_key=expected_pk,
+                        expected_sender_fingerprint=expected_fp,
                     )
                     return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
@@ -695,6 +836,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     TextContent(
                         type="text",
                         text=json.dumps({"error": f"Invalid base64 input: {e}"}, indent=2),
+                    )
+                ]
+            except SenderVerificationError as e:
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"error": f"Sender verification failed: {e}"}, indent=2),
                     )
                 ]
             except ValueError as e:
