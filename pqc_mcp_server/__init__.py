@@ -18,9 +18,12 @@ import asyncio
 
 try:
     import oqs
+    from oqs import MechanismNotSupportedError, MechanismNotEnabledError
     HAS_LIBOQS = True
 except ImportError:
     HAS_LIBOQS = False
+    MechanismNotSupportedError = Exception
+    MechanismNotEnabledError = Exception
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -294,7 +297,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     "is_ind_cca": kem.details.get("is_ind_cca", True),
                 }
                 return [TextContent(type="text", text=json.dumps(info, indent=2))]
-            except:
+            except MechanismNotSupportedError:
                 pass
 
             # Try as signature
@@ -310,7 +313,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     "is_euf_cma": sig.details.get("is_euf_cma", True),
                 }
                 return [TextContent(type="text", text=json.dumps(info, indent=2))]
-            except:
+            except MechanismNotSupportedError:
                 pass
 
             return [TextContent(type="text", text=json.dumps({"error": f"Unknown algorithm: {alg}"}, indent=2))]
@@ -333,7 +336,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     "secret_key_size": len(secret_key),
                 }
                 return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            except:
+            except MechanismNotSupportedError:
                 pass
 
             # Try as signature
@@ -463,13 +466,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 nist_level = kem.details.get("claimed_nist_level", 3)
                 alg_type = "KEM"
                 details = kem.details
-            except:
+            except MechanismNotSupportedError:
                 try:
                     sig = oqs.Signature(alg)
                     nist_level = sig.details.get("claimed_nist_level", 3)
                     alg_type = "Signature"
                     details = sig.details
-                except:
+                except MechanismNotSupportedError:
                     return [TextContent(type="text", text=json.dumps({"error": f"Unknown algorithm: {alg}"}, indent=2))]
 
             level_info = security_levels.get(nist_level, security_levels[3])

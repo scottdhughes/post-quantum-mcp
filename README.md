@@ -5,6 +5,8 @@
 [![liboqs](https://img.shields.io/badge/liboqs-0.15.0-green.svg)](https://openquantumsafe.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.0+-purple.svg)](https://modelcontextprotocol.io/)
 
+> **Research and Prototyping Only.** This server uses [liboqs](https://github.com/open-quantum-safe/liboqs), which is explicitly not recommended for production use or for protecting sensitive data. Secret keys and shared secrets appear in tool output, which may enter model context, client logs, or transcripts. Suitable for experimentation, education, and interoperability testing.
+
 A **Model Context Protocol (MCP) server** that provides post-quantum cryptographic operations using [Open Quantum Safe's liboqs](https://openquantumsafe.org/). Enables AI assistants like Claude to perform quantum-resistant cryptographic operations including key generation, encryption, signing, and verification.
 
 ## Why Post-Quantum Cryptography?
