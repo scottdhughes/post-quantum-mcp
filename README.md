@@ -273,16 +273,26 @@ post-quantum-mcp/
 └── README.md
 ```
 
-## Security Considerations
+## Threat Model / Guarantees / Non-Goals
 
-- **Not for production.** liboqs is research/prototyping software. Secret material appears in tool output.
-- **Key Storage**: Keys are generated in memory and returned in tool output. No persistent key storage.
-- **Side Channels**: liboqs implementations aim to be constant-time but may not be suitable for all threat models.
-- **Algorithm Selection**: ML-KEM and ML-DSA are NIST-standardized. Other algorithms are experimental.
-- **Anonymous Hybrid Envelope** (`hybrid_seal`/`hybrid_open`): Not sender-authenticated. Anyone with recipient public keys can seal.
-- **Authenticated Hybrid Envelope** (`hybrid_auth_seal`/`hybrid_auth_open`): Sender-authenticated via ML-DSA-65 signature. Recipient must supply expected sender identity.
-- **Neither mode is forward-secret** against later recipient long-term key compromise.
-- **Version Compatibility**: Tested with liboqs 0.15.0 + liboqs-python 0.14.1. Version skew may produce warnings.
+### What this provides
+- **Hybrid confidentiality**: shared secret is protected unless both X25519 and ML-KEM-768 are broken simultaneously.
+- **Ciphertext integrity**: AES-256-GCM with full-header AAD binding detects tampering.
+- **Sender authentication** (authenticated mode only): ML-DSA-65 signature over a canonical transcript proves sender identity. Signature is verified before decryption.
+- **Quantum resistance**: ML-KEM-768 (FIPS 203, NIST Level 3) resists Shor's algorithm. ML-DSA-65 (FIPS 204) provides post-quantum signature security.
+
+### What this does NOT provide
+- **Forward secrecy.** Neither envelope mode is forward-secret against later recipient long-term key compromise. FIPS 203 decapsulation is deterministic from (decapsulation key, ciphertext), and X25519 ECDH is deterministic from (private key, peer public key).
+- **Mutual authentication.** The authenticated mode proves sender identity to the recipient. It does not prove recipient identity to the sender.
+- **Session protocols.** This is single-shot sealed-envelope encryption, not a session protocol, ratchet, or PQXDH.
+- **Production readiness.** liboqs is research/prototyping software and is not recommended for production use or protecting sensitive data.
+
+### Operational considerations
+- **Secret material in tool output.** Keys, shared secrets, and signatures appear in MCP tool responses, which may enter model context, client logs, or transcripts.
+- **Key storage.** Keys are generated in memory and returned in tool output. No persistent key storage.
+- **Side channels.** liboqs implementations aim to be constant-time but may not be suitable for all threat models.
+- **Anonymous vs authenticated.** `hybrid_seal`/`hybrid_open` is anonymous — anyone with recipient public keys can seal. `hybrid_auth_seal`/`hybrid_auth_open` adds sender authentication via ML-DSA-65 signature.
+- **Version compatibility.** Tested with liboqs 0.15.0 + liboqs-python 0.14.1. Version skew produces a warning but passes all 106 tests across the full CI matrix.
 
 ## Development
 

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-03-30
 
 ### Added
 - Sender-authenticated hybrid envelopes: `pqc_hybrid_auth_seal`, `pqc_hybrid_auth_open`
@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Canonical length-prefixed binary transcript for signature input
 - `SenderVerificationError` distinct from `InvalidTag` for clear error separation
 - Signature verified before decryption (verify-then-decrypt ordering)
+- 106 tests across the full suite
+
+### Fixed
+- Fingerprint-binding bug: `hybrid_auth_open` now recomputes `SHA3-256(sender_public_key)` and verifies it matches the envelope's embedded fingerprint before checking expected sender identity. Previously, a malicious sender could sign with their own key while placing a different fingerprint in the envelope.
+
+### Tested Dependency Pairing
+- liboqs C library: 0.15.0
+- liboqs-python: 0.14.1 (PyPI)
+- cryptography: 46.0.6 (PyPI)
+- mcp: 1.26.0 (PyPI)
+- Python: 3.10, 3.11, 3.12, 3.13
+- Platforms: Ubuntu (latest), macOS (latest)
 
 ## [0.2.0] - 2026-03-30
 
@@ -38,16 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README centered on ML-KEM / ML-DSA / SLH-DSA; legacy names noted as compatibility aliases
 - Added `pytest-asyncio` to dev dependencies
 
-### Tested Dependency Pairing
-- liboqs C library: 0.15.0
-- liboqs-python: 0.14.1 (PyPI)
-- cryptography: 46.0.6 (PyPI)
-- mcp: 1.26.0 (PyPI)
-- Python: 3.10, 3.11, 3.12, 3.13
-- Platforms: Ubuntu (latest), macOS (latest)
-
-The liboqs 0.15.0 C library paired with liboqs-python 0.14.1 produces a version-skew warning but passes all tests across the full matrix. If you encounter issues, align the versions or pin to this tested pairing.
-
 ## [0.1.0] - 2026-01-07
 
 ### Added
@@ -58,5 +60,6 @@ The liboqs 0.15.0 C library paired with liboqs-python 0.14.1 produces a version-
 - Base64-encoded key/signature transport
 - SHA3 and SHAKE hash functions
 
+[0.3.0]: https://github.com/scottdhughes/post-quantum-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/scottdhughes/post-quantum-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/scottdhughes/post-quantum-mcp/releases/tag/v0.1.0
