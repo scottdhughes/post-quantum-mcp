@@ -57,9 +57,9 @@ Where:
 - `ss_x25519` — X25519 shared secret (32 bytes, from ECDH)
 - `epk_x25519` — sender's ephemeral X25519 public key (32 bytes)
 - `pk_x25519` — recipient's static X25519 public key (32 bytes)
-- `label` — domain separator: `b"pqc-mcp-v1-mlkem768-x25519-sha3-256"` (36 bytes)
+- `label` — domain separator: `b"\x5c\x2e\x2f\x2f\x5e\x5c"` (6 bytes, hex `5c2e2f2f5e5c`, ASCII `\.//^\`) — exact LAMPS draft label for `id-MLKEM768-X25519-SHA3-256`
 
-Total combiner input: 164 bytes → 32-byte output.
+Total combiner input: 134 bytes → 32-byte output.
 
 This construction includes public values (ephemeral key and recipient key) in the combiner hash, providing context binding. ML-KEM's Fujisaki-Okamoto transform already binds the ML-KEM ciphertext to its shared secret internally, so `ct_mlkem` is not included in the combiner (following X-Wing's design rationale).
 
@@ -322,7 +322,7 @@ This construction is simpler than TLS 1.3 or Signal PQXDH and should not be desc
 Pure crypto logic, no MCP dependencies:
 
 - `SUITE = "mlkem768-x25519-sha3-256"` — constant
-- `COMBINER_LABEL = b"pqc-mcp-v1-mlkem768-x25519-sha3-256"` — constant
+- `COMBINER_LABEL = b"\x5c\x2e\x2f\x2f\x5e\x5c"` — exact LAMPS draft label
 - `hybrid_keygen() -> dict` — generate X25519 + ML-KEM-768 keypair bundle
 - `hybrid_encap(classical_pk, pqc_pk) -> dict` — encapsulate, return combined shared secret + ciphertexts
 - `hybrid_decap(classical_sk, pqc_sk, x25519_epk, pqc_ct) -> dict` — decapsulate, return combined shared secret
