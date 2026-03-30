@@ -376,7 +376,7 @@ post-quantum-mcp/
 │   ├── __init__.py      # MCP server + tool handlers
 │   ├── __main__.py      # Entry point
 │   └── hybrid.py        # Hybrid X25519 + ML-KEM-768 crypto + authenticated envelopes (ML-DSA-65)
-├── tests/               # 106 tests (KEM, signatures, hashing, hybrid, authenticated envelopes, MCP handlers)
+├── tests/               # 110 tests (KEM, signatures, hashing, hybrid, authenticated envelopes, fingerprints, MCP handlers)
 ├── .github/workflows/   # CI pipeline (Python 3.10-3.13 × Ubuntu/macOS)
 ├── run.sh               # Wrapper script (sets library paths, finds venv)
 ├── pyproject.toml       # Package configuration
@@ -404,7 +404,23 @@ post-quantum-mcp/
 - **Key storage.** Keys are generated in memory and returned in tool output. No persistent key storage.
 - **Side channels.** liboqs implementations aim to be constant-time but may not be suitable for all threat models.
 - **Anonymous vs authenticated.** `hybrid_seal`/`hybrid_open` is anonymous — anyone with recipient public keys can seal. `hybrid_auth_seal`/`hybrid_auth_open` adds sender authentication via ML-DSA-65 signature.
-- **Version compatibility.** Tested with liboqs 0.15.0 + liboqs-python 0.14.1. Version skew produces a warning but passes all 106 tests across the full CI matrix.
+- **Version compatibility.** See Tested Compatibility below.
+
+## Tested Compatibility
+
+This table shows the exact versions CI-tested on every push. Other combinations may work but are not verified.
+
+| Component | CI-Tested Version | Floor (pyproject.toml) | Notes |
+|-----------|------------------|----------------------|-------|
+| **liboqs** (C library) | 0.15.0 | — (built from source) | CI builds from source on Ubuntu and macOS |
+| **liboqs-python** | 0.14.1 | `>=0.10.0` | Version skew with liboqs 0.15.0 produces a warning; all 110 tests pass |
+| **cryptography** | 46.0.6 | `>=42.0.0` | X25519, HKDFExpand, AESGCM |
+| **mcp** | 1.26.0 | `>=1.6.0,<2.0.0` | MCP Server + stdio transport |
+| **Python** | 3.10, 3.11, 3.12, 3.13 | `>=3.10` | Full matrix on Ubuntu + macOS |
+
+**liboqs / liboqs-python version skew:** The C library at 0.15.0 paired with the Python wrapper at 0.14.1 triggers `UserWarning: liboqs version (major, minor) 0.15.0 differs from liboqs-python version 0.14.1`. This is cosmetic — all algorithms used by this project (ML-KEM-768, ML-DSA-65, ML-DSA-44/87, Falcon, SLH-DSA) work correctly. When liboqs-python 0.15.x reaches PyPI, update and the warning will resolve.
+
+**What "may work" means:** Versions above the pyproject.toml floor but not in the CI-tested column are untested. They will likely work if no breaking API changes occurred, but we make no guarantee. If you encounter issues, pin to the CI-tested versions.
 
 ## Development
 
