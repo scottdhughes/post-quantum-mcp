@@ -71,7 +71,7 @@ PQC_TOOLS: list[Tool] = [
                     "description": "Name of stored KEM keypair",
                 },
             },
-            "required": ["algorithm", "public_key"],
+            "required": ["algorithm"],
         },
     ),
     Tool(
@@ -91,7 +91,7 @@ PQC_TOOLS: list[Tool] = [
                     "description": "Name of stored KEM keypair",
                 },
             },
-            "required": ["algorithm", "secret_key", "ciphertext"],
+            "required": ["algorithm", "ciphertext"],
         },
     ),
     Tool(
@@ -117,7 +117,7 @@ PQC_TOOLS: list[Tool] = [
                     "description": "Name of stored signing keypair",
                 },
             },
-            "required": ["algorithm", "secret_key", "message"],
+            "required": ["algorithm", "message"],
         },
     ),
     Tool(
@@ -138,7 +138,7 @@ PQC_TOOLS: list[Tool] = [
                     "description": "Name of stored signing keypair",
                 },
             },
-            "required": ["algorithm", "public_key", "message", "signature"],
+            "required": ["algorithm", "message", "signature"],
         },
     ),
     Tool(
@@ -202,7 +202,6 @@ PQC_TOOLS: list[Tool] = [
                     "description": "Name of stored hybrid key bundle",
                 },
             },
-            "required": ["classical_public_key", "pqc_public_key"],
         },
     ),
     Tool(
@@ -233,8 +232,6 @@ PQC_TOOLS: list[Tool] = [
                 },
             },
             "required": [
-                "classical_secret_key",
-                "pqc_secret_key",
                 "x25519_ephemeral_public_key",
                 "pqc_ciphertext",
             ],
@@ -292,7 +289,7 @@ PQC_TOOLS: list[Tool] = [
                     "description": "Name of stored hybrid key bundle",
                 },
             },
-            "required": ["envelope", "classical_secret_key", "pqc_secret_key"],
+            "required": ["envelope"],
         },
     ),
     Tool(
@@ -334,12 +331,6 @@ PQC_TOOLS: list[Tool] = [
                     "description": "Name of stored signing keypair for sender",
                 },
             },
-            "required": [
-                "recipient_classical_public_key",
-                "recipient_pqc_public_key",
-                "sender_secret_key",
-                "sender_public_key",
-            ],
         },
     ),
     Tool(
@@ -373,7 +364,7 @@ PQC_TOOLS: list[Tool] = [
                     "description": "Name of stored hybrid key bundle",
                 },
             },
-            "required": ["envelope", "classical_secret_key", "pqc_secret_key"],
+            "required": ["envelope"],
         },
     ),
     Tool(

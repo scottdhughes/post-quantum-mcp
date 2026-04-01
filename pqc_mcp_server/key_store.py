@@ -68,6 +68,16 @@ def _require_flat_signature(keys: dict[str, Any], name: str) -> None:
         )
 
 
+def _require_mldsa65(keys: dict[str, Any], name: str) -> None:
+    """Require key is a flat ML-DSA-65 signing keypair (for authenticated envelopes)."""
+    _require_flat_signature(keys, name)
+    algorithm = keys.get("algorithm", "")
+    if algorithm != "ML-DSA-65":
+        raise ValueError(
+            f"Key '{name}' uses {algorithm}, but authenticated envelopes require ML-DSA-65"
+        )
+
+
 def _require_flat_kem(keys: dict[str, Any], name: str) -> None:
     if "suite" in keys:
         raise ValueError(f"Key '{name}' is a hybrid bundle, not a KEM keypair")

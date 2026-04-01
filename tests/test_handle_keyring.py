@@ -12,6 +12,7 @@ from pqc_mcp_server.key_store import (
     _require_hybrid_bundle,
     _require_flat_signature,
     _require_flat_kem,
+    _require_mldsa65,
     handle_key_store_load,
     handle_key_store_save,
     handle_key_store_list,
@@ -20,6 +21,8 @@ from pqc_mcp_server.key_store import (
 )
 from pqc_mcp_server.hybrid import hybrid_keygen
 from pqc_mcp_server.handlers_pqc import handle_generate_keypair
+from pqc_mcp_server.handlers_hybrid import _resolve_sender
+from pqc_mcp_server.tools import PQC_TOOLS
 
 
 @pytest.fixture(autouse=True)
@@ -523,3 +526,83 @@ class TestGenericPQCTypeMismatch:
                     "message": "x",
                 }
             )
+
+
+# ---------------------------------------------------------------------------
+# Task 1: Schema tests — raw key fields must not appear in `required`
+# ---------------------------------------------------------------------------
+
+RAW_KEY_FIELDS = {
+    "public_key",
+    "secret_key",
+    "classical_public_key",
+    "pqc_public_key",
+    "classical_secret_key",
+    "pqc_secret_key",
+    "recipient_classical_public_key",
+    "recipient_pqc_public_key",
+    "sender_secret_key",
+    "sender_public_key",
+}
+
+HANDLE_ONLY_TOOLS = {
+    "pqc_encapsulate",
+    "pqc_decapsulate",
+    "pqc_sign",
+    "pqc_verify",
+    "pqc_hybrid_encap",
+    "pqc_hybrid_decap",
+    "pqc_hybrid_open",
+    "pqc_hybrid_auth_seal",
+    "pqc_hybrid_auth_open",
+}
+
+
+class TestSchemaAllowsHandleOnly:
+    """Verify that no raw key field is listed as required for the 9 handle-capable tools.
+
+    MCP clients enforce JSON Schema `required` before the handler runs, so any
+    raw key field in `required` makes handle-only workflows impossible.
+    """
+
+    @pytest.mark.parametrize("tool_name", sorted(HANDLE_ONLY_TOOLS))
+    def test_no_raw_key_in_required(self, tool_name):
+        tool = next((t for t in PQC_TOOLS if t.name == tool_name), None)
+        assert tool is not None, f"Tool {tool_name!r} not found in PQC_TOOLS"
+        required = tool.inputSchema.get("required", [])
+        overlap = RAW_KEY_FIELDS & set(required)
+        assert not overlap, (
+            f"Tool {tool_name!r} lists raw key field(s) {overlap!r} in required; "
+            "these must be removed so handle-only workflows are possible"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 2: ML-DSA-65 algorithm validation
+# ---------------------------------------------------------------------------
+
+
+class TestAlgorithmValidation:
+    """_resolve_sender must reject non-ML-DSA-65 signing keys."""
+
+    def test_falcon_key_rejected_for_auth_seal(self):
+        """A Falcon-512 signing key must be rejected with a clear ML-DSA-65 message."""
+        falcon_keys = handle_generate_keypair({"algorithm": "Falcon-512"})
+        store_from_keygen("falcon-sender", falcon_keys, overwrite=True)
+        with pytest.raises(ValueError, match="ML-DSA-65"):
+            _resolve_sender({"sender_key_store_name": "falcon-sender"})
+
+    def test_mldsa65_key_accepted_for_auth_seal(self):
+        """An ML-DSA-65 signing key must be accepted without raising."""
+        mldsa_keys = handle_generate_keypair({"algorithm": "ML-DSA-65"})
+        store_from_keygen("mldsa-sender", mldsa_keys, overwrite=True)
+        sk, pk = _resolve_sender({"sender_key_store_name": "mldsa-sender"})
+        assert len(sk) > 0
+        assert len(pk) > 0
+
+    def test_kem_key_rejected_for_auth_seal(self):
+        """A KEM key must be rejected with a 'signing keypair' error (existing behavior)."""
+        kem_keys = handle_generate_keypair({"algorithm": "ML-KEM-768"})
+        store_from_keygen("kem-sender", kem_keys, overwrite=True)
+        with pytest.raises(ValueError, match="signing keypair"):
+            _resolve_sender({"sender_key_store_name": "kem-sender"})
