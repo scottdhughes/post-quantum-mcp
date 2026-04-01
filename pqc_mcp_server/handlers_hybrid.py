@@ -151,8 +151,14 @@ def handle_hybrid_seal(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_hybrid_open(arguments: dict[str, Any]) -> dict[str, Any]:
+    envelope = arguments["envelope"]
+    if "sender_signature_algorithm" in envelope:
+        raise ValueError(
+            "This envelope has sender authentication. "
+            "Use pqc_hybrid_auth_open to verify the sender before decrypting."
+        )
     classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
-    return hybrid_open(arguments["envelope"], classical_sk, pqc_sk)
+    return hybrid_open(envelope, classical_sk, pqc_sk)
 
 
 def handle_hybrid_auth_seal(arguments: dict[str, Any]) -> dict[str, Any]:
