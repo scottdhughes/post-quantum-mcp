@@ -9,8 +9,15 @@ import hashlib
 import time
 from typing import Any
 
+import binascii
+
 import oqs
 from oqs import MechanismNotSupportedError
+
+
+def _b64(value: str | bytes) -> bytes:
+    """Strict base64 decode. Raises binascii.Error on invalid input."""
+    return base64.b64decode(value, validate=True)
 
 
 def handle_list_algorithms(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -100,11 +107,10 @@ def handle_generate_keypair(arguments: dict[str, Any]) -> dict[str, Any]:
     store_name = arguments.get("store_as")
     if store_name:
         from pqc_mcp_server.key_store import store_from_keygen
-        import hashlib as _hashlib
 
         overwrite = arguments.get("overwrite", False)
         store_from_keygen(store_name, result, overwrite=overwrite)
-        fp = _hashlib.sha3_256(base64.b64decode(result["public_key"])).hexdigest()
+        fp = hashlib.sha3_256(_b64(result["public_key"])).hexdigest()
         return {
             "algorithm": result["algorithm"],
             "type": result["type"],
@@ -175,15 +181,13 @@ def _resolve_flat_key(
                     f"Algorithm mismatch: requested '{requested_alg}' but key '{name}' is '{stored_alg}'"
                 )
 
-    return base64.b64decode(keys[key_field])
+    return _b64(keys[key_field])
 
 
 def handle_encapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
     resolved_pk = _resolve_flat_key(arguments, "public_key", "kem")
-    public_key = (
-        resolved_pk if resolved_pk is not None else base64.b64decode(arguments["public_key"])
-    )
+    public_key = resolved_pk if resolved_pk is not None else _b64(arguments["public_key"])
     kem = oqs.KeyEncapsulation(alg)
     ciphertext, shared_secret = kem.encap_secret(public_key)
     return {
@@ -198,10 +202,8 @@ def handle_encapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
 def handle_decapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
     resolved_sk = _resolve_flat_key(arguments, "secret_key", "kem")
-    secret_key = (
-        resolved_sk if resolved_sk is not None else base64.b64decode(arguments["secret_key"])
-    )
-    ciphertext = base64.b64decode(arguments["ciphertext"])
+    secret_key = resolved_sk if resolved_sk is not None else _b64(arguments["secret_key"])
+    ciphertext = _b64(arguments["ciphertext"])
     kem = oqs.KeyEncapsulation(alg, secret_key)
     shared_secret = kem.decap_secret(ciphertext)
     return {
@@ -214,9 +216,7 @@ def handle_decapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
 def handle_sign(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
     resolved_sk = _resolve_flat_key(arguments, "secret_key", "signature")
-    secret_key = (
-        resolved_sk if resolved_sk is not None else base64.b64decode(arguments["secret_key"])
-    )
+    secret_key = resolved_sk if resolved_sk is not None else _b64(arguments["secret_key"])
     message = arguments["message"].encode("utf-8")
     sig = oqs.Signature(alg, secret_key)
     signature = sig.sign(message)
@@ -231,11 +231,9 @@ def handle_sign(arguments: dict[str, Any]) -> dict[str, Any]:
 def handle_verify(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
     resolved_pk = _resolve_flat_key(arguments, "public_key", "signature")
-    public_key = (
-        resolved_pk if resolved_pk is not None else base64.b64decode(arguments["public_key"])
-    )
+    public_key = resolved_pk if resolved_pk is not None else _b64(arguments["public_key"])
     message = arguments["message"].encode("utf-8")
-    signature = base64.b64decode(arguments["signature"])
+    signature = _b64(arguments["signature"])
     sig = oqs.Signature(alg)
     is_valid = sig.verify(message, signature, public_key)
     return {
