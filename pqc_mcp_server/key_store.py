@@ -98,6 +98,7 @@ def handle_key_store_save(arguments: dict[str, Any]) -> dict[str, Any]:
     entry = {
         "name": name,
         "key_data": key_data,
+        "stored_as_handle": True,
     }
 
     # Extract type info for listing

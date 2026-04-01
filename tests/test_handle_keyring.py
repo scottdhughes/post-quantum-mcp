@@ -88,11 +88,13 @@ class TestHandleLoad:
         assert "fingerprint_algorithm" in loaded
         assert "secret_key" not in loaded
 
-    def test_explicit_save_returns_full_data(self):
+    def test_explicit_save_redacts_secrets(self):
         keys = hybrid_keygen()
         handle_key_store_save({"name": "raw", "key_data": keys})
         loaded = handle_key_store_load({"name": "raw"})
-        assert "secret_key" in loaded["classical"]
+        assert "secret_key" not in loaded.get("classical", {})
+        assert "public_key" in loaded["classical"]
+        assert loaded["stored_as_handle"] is True
 
 
 class TestHandleList:
@@ -103,7 +105,7 @@ class TestHandleList:
         result = handle_key_store_list({})
         by_name = {k["name"]: k for k in result["keys"]}
         assert by_name["alice"]["stored_as_handle"] is True
-        assert by_name["raw"]["stored_as_handle"] is False
+        assert by_name["raw"]["stored_as_handle"] is True
 
 
 class TestTypeValidators:
