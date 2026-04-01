@@ -57,6 +57,8 @@ def _resolve_hybrid_public(arguments: dict[str, Any], prefix: str = "") -> tuple
     has_raw = raw_cpk in arguments or raw_ppk in arguments
     if has_store and has_raw:
         raise ValueError(f"Provide either {store_param} or raw key parameters, not both")
+    if not has_store and not has_raw:
+        raise ValueError(f"Provide {store_param} or both {raw_cpk} and {raw_ppk}")
     if has_store:
         keys = _resolve_from_store(arguments[store_param])
         _require_hybrid_bundle(keys, arguments[store_param])
@@ -70,6 +72,8 @@ def _resolve_hybrid_secret(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
     has_raw = "classical_secret_key" in arguments or "pqc_secret_key" in arguments
     if has_store and has_raw:
         raise ValueError("Provide either key_store_name or raw key parameters, not both")
+    if not has_store and not has_raw:
+        raise ValueError("Provide key_store_name or both classical_secret_key and pqc_secret_key")
     if has_store:
         keys = _resolve_from_store(arguments["key_store_name"])
         _require_hybrid_bundle(keys, arguments["key_store_name"])
@@ -83,6 +87,8 @@ def _resolve_sender(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
     has_raw = "sender_secret_key" in arguments or "sender_public_key" in arguments
     if has_store and has_raw:
         raise ValueError("Provide either sender_key_store_name or raw key parameters, not both")
+    if not has_store and not has_raw:
+        raise ValueError("Provide sender_key_store_name or both sender_secret_key and sender_public_key")
     if has_store:
         keys = _resolve_from_store(arguments["sender_key_store_name"])
         _require_mldsa65(keys, arguments["sender_key_store_name"])

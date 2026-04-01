@@ -134,6 +134,8 @@ def _resolve_flat_key(
     has_raw = key_field in arguments
     if has_store and has_raw:
         raise ValueError("Provide either key_store_name or raw key parameters, not both")
+    if not has_store and not has_raw:
+        raise ValueError(f"Provide key_store_name or {key_field}")
     if not has_store:
         return None
 
