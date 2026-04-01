@@ -28,6 +28,7 @@ from pqc_mcp_server.key_store import (
     _resolve_from_store,
     _require_hybrid_bundle,
     _require_flat_signature,
+    _require_mldsa65,
 )
 
 
@@ -84,7 +85,7 @@ def _resolve_sender(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
         raise ValueError("Provide either sender_key_store_name or raw key parameters, not both")
     if has_store:
         keys = _resolve_from_store(arguments["sender_key_store_name"])
-        _require_flat_signature(keys, arguments["sender_key_store_name"])
+        _require_mldsa65(keys, arguments["sender_key_store_name"])
         return _b64(keys["secret_key"]), _b64(keys["public_key"])
     return _b64(arguments["sender_secret_key"]), _b64(arguments["sender_public_key"])
 
