@@ -411,14 +411,22 @@ Once configured, you can ask Claude:
 ```
 post-quantum-mcp/
 ├── pqc_mcp_server/
-│   ├── __init__.py      # MCP server + tool handlers
-│   ├── __main__.py      # Entry point
-│   └── hybrid.py        # Hybrid X25519 + ML-KEM-768 crypto + authenticated envelopes (ML-DSA-65)
-├── tests/               # Unit, handler, and stdio integration tests
-├── .github/workflows/   # CI pipeline (Python 3.10-3.13 × Ubuntu/macOS)
-├── run.sh               # Wrapper script (sets library paths, finds venv)
-├── pyproject.toml       # Package configuration
-├── uv.lock              # Cross-platform lockfile
+│   ├── __init__.py          # MCP server setup + tool dispatch
+│   ├── __main__.py          # Entry point
+│   ├── tools.py             # Tool definitions (23 tools)
+│   ├── handlers_pqc.py      # Core PQC handlers (KEM, signatures, hashing)
+│   ├── handlers_hybrid.py   # Hybrid, authenticated, and utility handlers
+│   ├── hybrid.py            # Crypto implementation (X25519, ML-KEM, ML-DSA, envelopes)
+│   └── key_store.py         # Session-scoped secret-handle keyring
+├── examples/                # Runnable Python examples
+│   ├── anonymous_envelope.py
+│   ├── authenticated_envelope.py
+│   └── failure_modes.py
+├── tests/                   # Unit, handler, and stdio integration tests
+├── .github/workflows/       # CI pipeline (Python 3.10-3.13 × Ubuntu/macOS)
+├── run.sh                   # Wrapper script (sets library paths, finds venv)
+├── pyproject.toml           # Package configuration
+├── uv.lock                  # Cross-platform lockfile
 ├── CHANGELOG.md
 └── README.md
 ```
