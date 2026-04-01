@@ -63,6 +63,8 @@ def _resolve_hybrid_public(arguments: dict[str, Any], prefix: str = "") -> tuple
         keys = _resolve_from_store(arguments[store_param])
         _require_hybrid_bundle(keys, arguments[store_param])
         return _b64(keys["classical"]["public_key"]), _b64(keys["pqc"]["public_key"])
+    if raw_cpk not in arguments or raw_ppk not in arguments:
+        raise ValueError(f"Provide both {raw_cpk} and {raw_ppk}")
     return _b64(arguments[raw_cpk]), _b64(arguments[raw_ppk])
 
 
@@ -78,6 +80,8 @@ def _resolve_hybrid_secret(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
         keys = _resolve_from_store(arguments["key_store_name"])
         _require_hybrid_bundle(keys, arguments["key_store_name"])
         return _b64(keys["classical"]["secret_key"]), _b64(keys["pqc"]["secret_key"])
+    if "classical_secret_key" not in arguments or "pqc_secret_key" not in arguments:
+        raise ValueError("Provide both classical_secret_key and pqc_secret_key")
     return _b64(arguments["classical_secret_key"]), _b64(arguments["pqc_secret_key"])
 
 
@@ -95,6 +99,8 @@ def _resolve_sender(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
         keys = _resolve_from_store(arguments["sender_key_store_name"])
         _require_mldsa65(keys, arguments["sender_key_store_name"])
         return _b64(keys["secret_key"]), _b64(keys["public_key"])
+    if "sender_secret_key" not in arguments or "sender_public_key" not in arguments:
+        raise ValueError("Provide both sender_secret_key and sender_public_key")
     return _b64(arguments["sender_secret_key"]), _b64(arguments["sender_public_key"])
 
 
@@ -152,11 +158,16 @@ def handle_hybrid_seal(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"envelope": envelope}
 
 
+_AUTH_ENVELOPE_FIELDS = {"sender_signature_algorithm", "sender_public_key", "signature"}
+
+
 def handle_hybrid_open(arguments: dict[str, Any]) -> dict[str, Any]:
     envelope = arguments["envelope"]
-    if "sender_signature_algorithm" in envelope:
+    auth_fields = _AUTH_ENVELOPE_FIELDS & envelope.keys()
+    if auth_fields:
         raise ValueError(
-            "This envelope has sender authentication. "
+            "This envelope has sender authentication fields "
+            f"({', '.join(sorted(auth_fields))}). "
             "Use pqc_hybrid_auth_open to verify the sender before decrypting."
         )
     classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
