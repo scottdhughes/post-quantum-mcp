@@ -150,8 +150,10 @@ def handle_key_store_load(arguments: dict[str, Any]) -> dict[str, Any]:
                 result["fingerprint_algorithm"] = "SHA3-256"
         return result
 
-    result2: dict[str, Any] = entry["key_data"]
-    return result2
+    # All entries now have stored_as_handle=True (set by both
+    # store_from_keygen and handle_key_store_save), so this path
+    # is unreachable. Return error rather than leaking secrets.
+    return {"error": f"Key '{name}' has unexpected storage format"}
 
 
 def handle_key_store_list(arguments: dict[str, Any]) -> dict[str, Any]:

@@ -88,7 +88,9 @@ def _resolve_sender(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
     if has_store and has_raw:
         raise ValueError("Provide either sender_key_store_name or raw key parameters, not both")
     if not has_store and not has_raw:
-        raise ValueError("Provide sender_key_store_name or both sender_secret_key and sender_public_key")
+        raise ValueError(
+            "Provide sender_key_store_name or both sender_secret_key and sender_public_key"
+        )
     if has_store:
         keys = _resolve_from_store(arguments["sender_key_store_name"])
         _require_mldsa65(keys, arguments["sender_key_store_name"])
