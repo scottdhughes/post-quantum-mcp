@@ -51,9 +51,21 @@ _AUTH_TRANSCRIPT_PREFIX = b"pqc-mcp-auth-v2\x00"  # 16 bytes, null-terminated
 _ACCEPTED_VERSIONS = {ENVELOPE_VERSION, _ENVELOPE_VERSION_V1}
 
 
+_MLKEM768_PK_SIZE = 1184
+_MLKEM768_SK_SIZE = 2400
+
+
 def _validate_x25519_key(key_bytes: bytes, label: str) -> None:
     if len(key_bytes) != 32:
         raise ValueError(f"{label} must be exactly 32 bytes, got {len(key_bytes)}")
+
+
+def _validate_mlkem768_pk(key_bytes: bytes, label: str) -> None:
+    if len(key_bytes) != _MLKEM768_PK_SIZE:
+        raise ValueError(
+            f"{label} must be exactly {_MLKEM768_PK_SIZE} bytes for ML-KEM-768, "
+            f"got {len(key_bytes)}"
+        )
 
 
 def _check_x25519_shared_secret(ss: bytes) -> None:
@@ -197,6 +209,7 @@ def hybrid_keygen() -> dict[str, Any]:
 def hybrid_encap(classical_pk: bytes, pqc_pk: bytes) -> dict[str, Any]:
     """Perform hybrid encapsulation. Returns combined shared secret + ciphertexts."""
     _validate_x25519_key(classical_pk, "classical_public_key")
+    _validate_mlkem768_pk(pqc_pk, "pqc_public_key")
 
     # X25519: generate ephemeral keypair and perform ECDH
     eph_sk = X25519PrivateKey.generate()
@@ -267,6 +280,7 @@ def hybrid_seal(
     Single-shot: one encapsulation, one AEAD encryption.
     """
     _validate_x25519_key(recipient_classical_pk, "recipient_classical_public_key")
+    _validate_mlkem768_pk(recipient_pqc_pk, "recipient_pqc_public_key")
 
     # Encapsulate (raw bytes, not base64)
     eph_sk = X25519PrivateKey.generate()
