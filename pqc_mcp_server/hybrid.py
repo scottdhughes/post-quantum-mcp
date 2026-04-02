@@ -53,11 +53,27 @@ _ACCEPTED_VERSIONS = {ENVELOPE_VERSION, _ENVELOPE_VERSION_V1}
 
 _MLKEM768_PK_SIZE = 1184
 _MLKEM768_SK_SIZE = 2400
+_MLDSA65_PK_SIZE = 1952
+_MLDSA65_SK_SIZE = 4032
 
 
 def _validate_x25519_key(key_bytes: bytes, label: str) -> None:
     if len(key_bytes) != 32:
         raise ValueError(f"{label} must be exactly 32 bytes, got {len(key_bytes)}")
+
+
+def _validate_mldsa65_key(sk: bytes, pk: bytes) -> None:
+    """Validate ML-DSA-65 key sizes. Prevents key type confusion with liboqs."""
+    if len(sk) != _MLDSA65_SK_SIZE:
+        raise ValueError(
+            f"ML-DSA-65 secret key must be {_MLDSA65_SK_SIZE} bytes, got {len(sk)}. "
+            "Wrong key type? Ensure you are using a signing key, not an encryption key."
+        )
+    if len(pk) != _MLDSA65_PK_SIZE:
+        raise ValueError(
+            f"ML-DSA-65 public key must be {_MLDSA65_PK_SIZE} bytes, got {len(pk)}. "
+            "Wrong key type? Ensure you are using a signing key, not an encryption key."
+        )
 
 
 def _validate_mlkem768_pk(key_bytes: bytes, label: str) -> None:
@@ -383,6 +399,10 @@ def hybrid_auth_seal(
     covering the entire envelope. The signature proves sender identity.
     Still not forward-secret against later recipient key compromise.
     """
+    # Validate signing key sizes (prevents key type confusion — liboqs
+    # silently accepts wrong-size keys, producing garbage signatures)
+    _validate_mldsa65_key(sender_sig_sk, sender_sig_pk)
+
     # Seal (anonymous confidentiality layer — reuse existing core)
     envelope = hybrid_seal(plaintext_bytes, recipient_classical_pk, recipient_pqc_pk)
 

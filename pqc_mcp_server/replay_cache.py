@@ -23,6 +23,7 @@ from typing import Any
 from pqc_mcp_server.filesystem import ensure_secure_directory, ensure_secure_file
 
 _DEFAULT_TTL = 24 * 60 * 60  # 24 hours
+_DEFAULT_MAX_SIZE = 50_000  # max entries before oldest are evicted
 _DEFAULT_STATE_DIR = os.path.expanduser("~/.pqc/state")
 _DEFAULT_CACHE_FILE = os.path.join(_DEFAULT_STATE_DIR, "replay-cache.json")
 
@@ -44,10 +45,14 @@ class ReplayCache:
     """
 
     def __init__(
-        self, cache_file: str = _DEFAULT_CACHE_FILE, ttl_seconds: int = _DEFAULT_TTL
+        self,
+        cache_file: str = _DEFAULT_CACHE_FILE,
+        ttl_seconds: int = _DEFAULT_TTL,
+        max_size: int = _DEFAULT_MAX_SIZE,
     ) -> None:
         self.cache_file = cache_file
         self.ttl_seconds = ttl_seconds
+        self.max_size = max_size
         self._cache: dict[str, float] = {}  # digest → expiry timestamp
         self._load()
 
@@ -86,11 +91,17 @@ class ReplayCache:
             pass  # fail open — replay cache is best-effort for research tool
 
     def prune(self, now: float | None = None) -> None:
-        """Remove expired entries."""
+        """Remove expired entries and enforce max size (oldest-first eviction)."""
         now = now or time.time()
         expired = [k for k, expiry in self._cache.items() if expiry <= now]
         for k in expired:
             del self._cache[k]
+        # Evict oldest entries if over max_size (prevents cache-flood DoS)
+        if len(self._cache) > self.max_size:
+            sorted_entries = sorted(self._cache.items(), key=lambda x: x[1])
+            to_evict = len(self._cache) - self.max_size
+            for k, _ in sorted_entries[:to_evict]:
+                del self._cache[k]
 
     def check(self, digest: str) -> bool:
         """Check if digest has been seen. Returns True if replay (already seen)."""

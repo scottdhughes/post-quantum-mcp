@@ -194,10 +194,12 @@ def handle_hybrid_auth_seal(arguments: dict[str, Any]) -> dict[str, Any]:
 def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
     envelope = arguments["envelope"]
 
-    # Replay dedup: atomic check+mark (eliminates TOCTOU window)
+    # Replay dedup: check BEFORE verification, mark AFTER success.
+    # This prevents pre-image blocking (Codex finding R4): an attacker
+    # can't submit an unverified envelope to block the real one.
     cache = get_replay_cache()
     digest = signature_digest(envelope)
-    if cache.check_and_mark(digest):
+    if cache.check(digest):
         raise ValueError("Duplicate envelope (replay detected)")
 
     classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
@@ -207,13 +209,17 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     expected_fp = arguments.get("expected_sender_fingerprint")
-    return hybrid_auth_open(
+    result = hybrid_auth_open(
         envelope,
         classical_sk,
         pqc_sk,
         expected_sender_public_key=expected_pk,
         expected_sender_fingerprint=expected_fp,
     )
+
+    # Mark AFTER successful verify+decrypt — only verified envelopes enter cache
+    cache.mark(digest)
+    return result
 
 
 def handle_hybrid_auth_verify(arguments: dict[str, Any]) -> dict[str, Any]:
