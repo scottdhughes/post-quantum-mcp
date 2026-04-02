@@ -9,7 +9,6 @@ import hashlib
 import time
 from typing import Any
 
-import binascii
 
 import oqs
 from oqs import MechanismNotSupportedError
@@ -176,22 +175,31 @@ def _resolve_flat_key(
                     k1 = oqs.KeyEncapsulation(stored_alg)
                     k2 = oqs.KeyEncapsulation(requested_alg)
                     if k1.details["name"] != k2.details["name"]:
-                        raise ValueError(
-                            f"Algorithm mismatch: requested '{requested_alg}' but key '{name}' is '{stored_alg}'"
+                        msg = (
+                            f"Algorithm mismatch: requested"
+                            f" '{requested_alg}' but key"
+                            f" '{name}' is '{stored_alg}'"
                         )
+                        raise ValueError(msg)
                 else:
                     s1 = oqs.Signature(stored_alg)
                     s2 = oqs.Signature(requested_alg)
                     if s1.details["name"] != s2.details["name"]:
-                        raise ValueError(
-                            f"Algorithm mismatch: requested '{requested_alg}' but key '{name}' is '{stored_alg}'"
+                        msg = (
+                            f"Algorithm mismatch: requested"
+                            f" '{requested_alg}' but key"
+                            f" '{name}' is '{stored_alg}'"
                         )
+                        raise ValueError(msg)
             except ValueError:
                 raise
             except Exception:
-                raise ValueError(
-                    f"Algorithm mismatch: requested '{requested_alg}' but key '{name}' is '{stored_alg}'"
+                msg = (
+                    f"Algorithm mismatch: requested"
+                    f" '{requested_alg}' but key"
+                    f" '{name}' is '{stored_alg}'"
                 )
+                raise ValueError(msg)
 
     return _b64(keys[key_field])
 

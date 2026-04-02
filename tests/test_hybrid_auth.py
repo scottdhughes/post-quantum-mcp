@@ -5,7 +5,6 @@ Module import errors fail loudly — no silent skips.
 """
 
 import base64
-import binascii
 import hashlib
 import struct
 import pytest
@@ -529,6 +528,7 @@ class TestReplayProtection:
         )
         # Backdate the timestamp to guarantee staleness, then re-sign
         import time as _time
+
         old_ts = str(int(_time.time()) - 7200)  # 2 hours ago
         envelope["timestamp"] = old_ts
         # Re-signing is needed since timestamp is in the transcript.
@@ -595,6 +595,7 @@ class TestReplayProtection:
     def test_future_timestamp_rejected(self):
         """Envelope with timestamp far in the future must be rejected (>5 min)."""
         import time as _time
+
         sender_sk, sender_pk = _make_sender_keys()
         recipient = _make_recipient_keys()
         envelope = hybrid_auth_seal(
@@ -608,7 +609,6 @@ class TestReplayProtection:
         # We can't just edit the timestamp (signature would break),
         # so we test via a mock approach: manually set a far-future ts
         # and expect signature failure (since real ts was in the transcript)
-        original_ts = envelope["timestamp"]
         envelope["timestamp"] = str(int(_time.time()) + 600)  # 10 min ahead
         # Signature was over the original timestamp, so this should fail
         with pytest.raises(SenderVerificationError, match="Signature verification failed"):

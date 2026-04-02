@@ -2,9 +2,7 @@
 
 import os
 import stat
-import tempfile
 
-import pytest
 
 from pqc_mcp_server.filesystem import ensure_secure_directory, ensure_secure_file
 

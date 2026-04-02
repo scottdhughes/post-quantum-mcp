@@ -72,9 +72,7 @@ class ReplayCache:
         """Atomic persist: write to temp file, then rename. Secure permissions."""
         try:
             ensure_secure_directory(os.path.dirname(self.cache_file))
-            fd, tmp_path = tempfile.mkstemp(
-                dir=os.path.dirname(self.cache_file), suffix=".tmp"
-            )
+            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(self.cache_file), suffix=".tmp")
             try:
                 with os.fdopen(fd, "w") as f:
                     json.dump(self._cache, f)

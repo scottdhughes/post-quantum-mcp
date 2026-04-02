@@ -10,7 +10,6 @@ Raises specific exceptions for the dispatch layer to catch:
 
 # mypy: disable-error-code="no-any-return"
 import base64
-import binascii
 from typing import Any
 
 from pqc_mcp_server.hybrid import (
@@ -30,7 +29,6 @@ from pqc_mcp_server.key_store import (
     store_from_keygen,
     _resolve_from_store,
     _require_hybrid_bundle,
-    _require_flat_signature,
     _require_mldsa65,
 )
 
@@ -73,9 +71,7 @@ def _resolve_hybrid_public(arguments: dict[str, Any], prefix: str = "") -> tuple
 
 def _resolve_hybrid_secret(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
     """Resolve hybrid recipient secret keys from store or raw args."""
-    get_policy().check_no_raw_secrets(
-        arguments, ["classical_secret_key", "pqc_secret_key"]
-    )
+    get_policy().check_no_raw_secrets(arguments, ["classical_secret_key", "pqc_secret_key"])
     has_store = "key_store_name" in arguments
     has_raw = "classical_secret_key" in arguments or "pqc_secret_key" in arguments
     if has_store and has_raw:
@@ -93,9 +89,7 @@ def _resolve_hybrid_secret(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
 
 def _resolve_sender(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
     """Resolve sender signing keys from store or raw args. Returns (sk, pk)."""
-    get_policy().check_no_raw_secrets(
-        arguments, ["sender_secret_key"]
-    )
+    get_policy().check_no_raw_secrets(arguments, ["sender_secret_key"])
     has_store = "sender_key_store_name" in arguments
     has_raw = "sender_secret_key" in arguments or "sender_public_key" in arguments
     if has_store and has_raw:

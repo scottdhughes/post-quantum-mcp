@@ -130,12 +130,14 @@ def _derive_aead_key_and_nonce(
     epk_domain = b"" if is_v1 else (hashlib.sha256(epk_bytes).digest() if epk_bytes else b"")
 
     aes_key = HKDFExpand(
-        algorithm=SHA256(), length=32,
+        algorithm=SHA256(),
+        length=32,
         info=prefix + b"aes-256-gcm-key" + epk_domain,
     ).derive(prk)
 
     nonce = HKDFExpand(
-        algorithm=SHA256(), length=12,
+        algorithm=SHA256(),
+        length=12,
         info=prefix + b"aes-256-gcm-nonce" + epk_domain,
     ).derive(prk)
 
@@ -485,7 +487,8 @@ def _verify_authenticated_envelope(
         )
     if expected_sender_public_key is not None and expected_sender_fingerprint is not None:
         raise SenderVerificationError(
-            "Provide exactly one of expected_sender_public_key or expected_sender_fingerprint, not both"
+            "Provide exactly one of expected_sender_public_key"
+            " or expected_sender_fingerprint, not both"
         )
 
     # Validate header fields
@@ -500,8 +503,13 @@ def _verify_authenticated_envelope(
         raise ValueError(f"Unsupported sender signature algorithm: {sig_alg}")
 
     # Verify required auth fields exist before accessing them
-    for field in ("sender_public_key", "sender_key_fingerprint", "signature",
-                  "recipient_classical_key_fingerprint", "recipient_pqc_key_fingerprint"):
+    for field in (
+        "sender_public_key",
+        "sender_key_fingerprint",
+        "signature",
+        "recipient_classical_key_fingerprint",
+        "recipient_pqc_key_fingerprint",
+    ):
         if field not in envelope:
             raise ValueError(f"Missing required authenticated envelope field: {field}")
 
@@ -614,7 +622,10 @@ def hybrid_auth_open(
     invalid, the AEAD layer is never reached.
     """
     verified = _verify_authenticated_envelope(
-        envelope, expected_sender_public_key, expected_sender_fingerprint, max_age_seconds,
+        envelope,
+        expected_sender_public_key,
+        expected_sender_fingerprint,
+        max_age_seconds,
     )
 
     # Signature valid — now decrypt via the existing anonymous open path
@@ -641,7 +652,10 @@ def hybrid_auth_verify(
 ) -> dict[str, Any]:
     """Verify sender signature without decrypting. No secret keys needed."""
     verified = _verify_authenticated_envelope(
-        envelope, expected_sender_public_key, expected_sender_fingerprint, max_age_seconds,
+        envelope,
+        expected_sender_public_key,
+        expected_sender_fingerprint,
+        max_age_seconds,
     )
     verified["verified"] = True
     return verified

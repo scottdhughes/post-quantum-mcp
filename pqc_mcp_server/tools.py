@@ -9,7 +9,9 @@ from mcp.types import Tool
 PQC_TOOLS: list[Tool] = [
     Tool(
         name="pqc_list_algorithms",
-        description="List all available post-quantum cryptographic algorithms (KEMs and signatures)",
+        description=(
+            "List all available post-quantum cryptographic algorithms (KEMs and signatures)"
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -24,7 +26,11 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_algorithm_info",
-        description="Get detailed information about a specific PQC algorithm including security level, key sizes, and performance characteristics",
+        description=(
+            "Get detailed information about a specific PQC algorithm"
+            " including security level, key sizes, and performance"
+            " characteristics"
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -48,15 +54,21 @@ PQC_TOOLS: list[Tool] = [
                 },
                 "store_as": {
                     "type": "string",
-                    "description": "Optional name to store the keypair handle (secret key never returned)",
+                    "description": (
+                        "Optional name to store the keypair handle (secret key never returned)"
+                    ),
                 },
                 "overwrite": {
                     "type": "boolean",
-                    "description": "If true, overwrite an existing stored key with the same name",
+                    "description": ("If true, overwrite an existing stored key with the same name"),
                 },
                 "include_secret_key": {
                     "type": "boolean",
-                    "description": "If false, redact secret key from response (default true for backwards compat; use store_as instead for opaque handles)",
+                    "description": (
+                        "If false, redact secret key from response"
+                        " (default true for backwards compat;"
+                        " use store_as instead for opaque handles)"
+                    ),
                 },
             },
             "required": ["algorithm"],
@@ -163,7 +175,11 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_security_analysis",
-        description="Educational estimate of security properties: maps NIST levels to classical/quantum equivalents. This is a static lookup, not a formal per-algorithm analysis.",
+        description=(
+            "Educational estimate of security properties: maps NIST"
+            " levels to classical/quantum equivalents. This is a"
+            " static lookup, not a formal per-algorithm analysis."
+        ),
         inputSchema={
             "type": "object",
             "properties": {"algorithm": {"type": "string", "description": "Algorithm to analyze"}},
@@ -172,24 +188,33 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_hybrid_keygen",
-        description="Generate a hybrid X25519 + ML-KEM-768 keypair bundle (suite: mlkem768-x25519-sha3-256). Research/prototyping only.",
+        description=(
+            "Generate a hybrid X25519 + ML-KEM-768 keypair bundle"
+            " (suite: mlkem768-x25519-sha3-256)."
+            " Research/prototyping only."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "store_as": {
                     "type": "string",
-                    "description": "Optional name to store the keypair handle (secret key never returned)",
+                    "description": (
+                        "Optional name to store the keypair handle (secret key never returned)"
+                    ),
                 },
                 "overwrite": {
                     "type": "boolean",
-                    "description": "If true, overwrite an existing stored key with the same name",
+                    "description": ("If true, overwrite an existing stored key with the same name"),
                 },
             },
         },
     ),
     Tool(
         name="pqc_hybrid_encap",
-        description="Perform hybrid X25519 + ML-KEM-768 key encapsulation. Returns combined shared secret + ciphertexts.",
+        description=(
+            "Perform hybrid X25519 + ML-KEM-768 key encapsulation."
+            " Returns combined shared secret + ciphertexts."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -243,13 +268,20 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_hybrid_seal",
-        description="Encrypt plaintext using hybrid X25519 + ML-KEM-768 + AES-256-GCM. Anonymous sealed-box. Research/prototyping only.",
+        description=(
+            "Encrypt plaintext using hybrid X25519 + ML-KEM-768"
+            " + AES-256-GCM. Anonymous sealed-box."
+            " Research/prototyping only."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "plaintext": {
                     "type": "string",
-                    "description": "UTF-8 string to encrypt (mutually exclusive with plaintext_base64)",
+                    "description": (
+                        "UTF-8 string to encrypt"
+                        " (mutually exclusive with plaintext_base64)"
+                    ),
                 },
                 "plaintext_base64": {
                     "type": "string",
@@ -298,13 +330,19 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_hybrid_auth_seal",
-        description="Encrypt + sign: sender-authenticated hybrid sealed envelope using ML-DSA-65. Research/prototyping only.",
+        description=(
+            "Encrypt + sign: sender-authenticated hybrid sealed"
+            " envelope using ML-DSA-65. Research/prototyping only."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "plaintext": {
                     "type": "string",
-                    "description": "UTF-8 string to encrypt (mutually exclusive with plaintext_base64)",
+                    "description": (
+                        "UTF-8 string to encrypt"
+                        " (mutually exclusive with plaintext_base64)"
+                    ),
                 },
                 "plaintext_base64": {
                     "type": "string",
@@ -339,7 +377,11 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_hybrid_auth_open",
-        description="Verify sender + decrypt: authenticated hybrid envelope. Requires expected sender identity. Signature verified before decryption.",
+        description=(
+            "Verify sender + decrypt: authenticated hybrid envelope."
+            " Requires expected sender identity."
+            " Signature verified before decryption."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -357,11 +399,15 @@ PQC_TOOLS: list[Tool] = [
                 },
                 "expected_sender_public_key": {
                     "type": "string",
-                    "description": "Base64-encoded ML-DSA-65 public key (exactly one of this or expected_sender_fingerprint required)",
+                    "description": (
+                        "Base64-encoded ML-DSA-65 public key"
+                        " (exactly one of this or"
+                        " expected_sender_fingerprint required)"
+                    ),
                 },
                 "expected_sender_fingerprint": {
                     "type": "string",
-                    "description": "SHA3-256 hex fingerprint of sender public key",
+                    "description": ("SHA3-256 hex fingerprint of sender public key"),
                 },
                 "key_store_name": {
                     "type": "string",
@@ -373,7 +419,12 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_hybrid_auth_verify",
-        description="Verify sender signature on an authenticated envelope WITHOUT decrypting. No secret keys needed. Checks sender binding, fingerprint consistency, ML-DSA-65 signature, and timestamp freshness.",
+        description=(
+            "Verify sender signature on an authenticated envelope"
+            " WITHOUT decrypting. No secret keys needed. Checks"
+            " sender binding, fingerprint consistency, ML-DSA-65"
+            " signature, and timestamp freshness."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -383,11 +434,15 @@ PQC_TOOLS: list[Tool] = [
                 },
                 "expected_sender_public_key": {
                     "type": "string",
-                    "description": "Base64-encoded ML-DSA-65 public key (exactly one of this or expected_sender_fingerprint required)",
+                    "description": (
+                        "Base64-encoded ML-DSA-65 public key"
+                        " (exactly one of this or"
+                        " expected_sender_fingerprint required)"
+                    ),
                 },
                 "expected_sender_fingerprint": {
                     "type": "string",
-                    "description": "SHA3-256 hex fingerprint of sender public key",
+                    "description": ("SHA3-256 hex fingerprint of sender public key"),
                 },
             },
             "required": ["envelope"],
@@ -409,13 +464,20 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_envelope_inspect",
-        description="Inspect a sealed or authenticated envelope's metadata without decrypting. No secret keys needed.",
+        description=(
+            "Inspect a sealed or authenticated envelope's metadata"
+            " without decrypting. No secret keys needed."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
                 "envelope": {
                     "type": "object",
-                    "description": "Envelope from pqc_hybrid_seal, pqc_hybrid_open, pqc_hybrid_auth_seal, or pqc_hybrid_auth_open",
+                    "description": (
+                        "Envelope from pqc_hybrid_seal,"
+                        " pqc_hybrid_open, pqc_hybrid_auth_seal,"
+                        " or pqc_hybrid_auth_open"
+                    ),
                 },
             },
             "required": ["envelope"],
@@ -423,7 +485,10 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_benchmark",
-        description="Benchmark a PQC algorithm: timed keygen, encap/sign, decap/verify, and key/ciphertext/signature sizes.",
+        description=(
+            "Benchmark a PQC algorithm: timed keygen, encap/sign,"
+            " decap/verify, and key/ciphertext/signature sizes."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -442,7 +507,9 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_key_store_save",
-        description="Save a keygen output by name for convenient reference. Session-scoped, no persistence.",
+        description=(
+            "Save a keygen output by name for convenient reference. Session-scoped, no persistence."
+        ),
         inputSchema={
             "type": "object",
             "properties": {
@@ -452,7 +519,9 @@ PQC_TOOLS: list[Tool] = [
                 },
                 "key_data": {
                     "type": "object",
-                    "description": "Key data object (output of pqc_hybrid_keygen or pqc_generate_keypair)",
+                    "description": (
+                        "Key data object (output of pqc_hybrid_keygen or pqc_generate_keypair)"
+                    ),
                 },
             },
             "required": ["name", "key_data"],
@@ -471,7 +540,11 @@ PQC_TOOLS: list[Tool] = [
     ),
     Tool(
         name="pqc_key_store_list",
-        description="List all stored keys with metadata (names, types, fingerprints). No secret material shown.",
+        description=(
+            "List all stored keys with metadata"
+            " (names, types, fingerprints)."
+            " No secret material shown."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(

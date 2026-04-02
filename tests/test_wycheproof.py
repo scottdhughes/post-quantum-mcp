@@ -15,7 +15,6 @@ Requires liboqs, cryptography, and hypothesis.
 """
 
 import base64
-import hashlib
 import json
 import os
 import pathlib
@@ -26,22 +25,27 @@ oqs = pytest.importorskip("oqs", reason="liboqs-python not installed")
 pytest.importorskip("cryptography", reason="cryptography not installed")
 
 import sys
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
-    X25519PrivateKey, X25519PublicKey,
+    X25519PrivateKey,
+    X25519PublicKey,
 )
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand, HKDF
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.exceptions import InvalidTag
 
 from pqc_mcp_server.hybrid import (
-    hybrid_keygen, hybrid_seal, hybrid_open,
-    hybrid_auth_seal, hybrid_auth_open, hybrid_auth_verify,
-    _fingerprint_public_key, _kem_combine, SenderVerificationError,
-    ENVELOPE_VERSION,
+    hybrid_keygen,
+    hybrid_seal,
+    hybrid_open,
+    hybrid_auth_seal,
+    hybrid_auth_open,
+    hybrid_auth_verify,
+    _fingerprint_public_key,
+    _kem_combine,
 )
 from pqc_mcp_server.key_store import clear_store
 
@@ -58,6 +62,7 @@ def clean_store():
 # ═══════════════════════════════════════════════════════════════
 # TIER 1: Wycheproof AES-GCM Test Vectors
 # ═══════════════════════════════════════════════════════════════
+
 
 class TestWycheproofAESGCM:
     """Run Wycheproof AES-256-GCM vectors against the cryptography library.
@@ -84,7 +89,7 @@ class TestWycheproofAESGCM:
                 continue
 
             iv_size = group["ivSize"]
-            tag_size = group["tagSize"]
+            _ = group["tagSize"]  # available but unused in our AES-GCM tests
 
             for tc in group["tests"]:
                 key = bytes.fromhex(tc["key"])
@@ -133,6 +138,7 @@ class TestWycheproofAESGCM:
 # ═══════════════════════════════════════════════════════════════
 # TIER 1: Wycheproof X25519 Test Vectors
 # ═══════════════════════════════════════════════════════════════
+
 
 class TestWycheproofX25519:
     """Run Wycheproof X25519 ECDH vectors.
@@ -205,6 +211,7 @@ class TestWycheproofX25519:
 # TIER 1: Wycheproof HKDF-SHA256 Test Vectors
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestWycheproofHKDF:
     """Run Wycheproof HKDF-SHA256 vectors."""
 
@@ -260,7 +267,8 @@ class TestWycheproofHKDF:
 
 try:
     from hypothesis import given, settings, HealthCheck
-    from hypothesis.strategies import binary, integers
+    from hypothesis.strategies import binary
+
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
@@ -358,6 +366,7 @@ class TestHypothesisFuzzing:
 # ═══════════════════════════════════════════════════════════════
 # TIER 2: Combiner Invariant Fuzzing
 # ═══════════════════════════════════════════════════════════════
+
 
 @pytest.mark.skipif(not HAS_HYPOTHESIS, reason="hypothesis not installed")
 class TestCombinerFuzzing:

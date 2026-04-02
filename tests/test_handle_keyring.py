@@ -12,7 +12,6 @@ from pqc_mcp_server.key_store import (
     _require_hybrid_bundle,
     _require_flat_signature,
     _require_flat_kem,
-    _require_mldsa65,
     handle_key_store_load,
     handle_key_store_save,
     handle_key_store_list,
@@ -207,7 +206,7 @@ class TestHybridResolution:
         assert "envelope" in result
 
     def test_open_with_store_name(self):
-        keys = handle_hybrid_keygen({"store_as": "recipient"})
+        handle_hybrid_keygen({"store_as": "recipient"})
         # Need full keys for seal (use raw for seal, store for open)
         full_keys = hybrid_keygen()
         store_from_keygen("r2", full_keys, overwrite=True)

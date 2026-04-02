@@ -57,3 +57,4 @@ dmypy.json
 .env
 .env.local
 *.local.json
+.hypothesis/

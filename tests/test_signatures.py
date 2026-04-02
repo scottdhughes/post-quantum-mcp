@@ -4,7 +4,6 @@ Requires liboqs to be installed — skipped otherwise.
 """
 
 import base64
-import json
 import pytest
 
 from tests.conftest import requires_liboqs

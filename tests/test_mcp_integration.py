@@ -7,7 +7,6 @@ not just the Python handler functions.
 Requires liboqs and cryptography installed.
 """
 
-import base64
 import os
 import pytest
 

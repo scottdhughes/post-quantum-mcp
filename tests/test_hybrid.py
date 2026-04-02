@@ -124,8 +124,12 @@ class TestHKDF:
 
     def test_v1_ignores_epk_domain(self):
         """v1 derivation must not use epk in HKDF info (backwards compat)."""
-        k1, n1 = _derive_aead_key_and_nonce(b"\x01" * 32, b"\xaa" * 32, version=_ENVELOPE_VERSION_V1)
-        k2, n2 = _derive_aead_key_and_nonce(b"\x01" * 32, b"\xbb" * 32, version=_ENVELOPE_VERSION_V1)
+        k1, n1 = _derive_aead_key_and_nonce(
+            b"\x01" * 32, b"\xaa" * 32, version=_ENVELOPE_VERSION_V1
+        )
+        k2, n2 = _derive_aead_key_and_nonce(
+            b"\x01" * 32, b"\xbb" * 32, version=_ENVELOPE_VERSION_V1
+        )
         assert k1 == k2
         assert n1 == n2
 

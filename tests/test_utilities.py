@@ -1,7 +1,6 @@
 """Tests for key store, benchmark, and envelope inspection tools."""
 
 import base64
-import json
 import pytest
 
 oqs = pytest.importorskip("oqs", reason="liboqs-python not installed")

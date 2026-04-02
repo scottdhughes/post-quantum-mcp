@@ -1,11 +1,10 @@
 """Tests for PQC MCP server tool registration and basic plumbing."""
 
 import base64
-import json
 import pytest
 
 from mcp.types import ListToolsRequest
-from pqc_mcp_server import server, HAS_LIBOQS
+from pqc_mcp_server import server
 
 EXPECTED_TOOLS = [
     "pqc_list_algorithms",
