@@ -21,6 +21,7 @@ from pqc_mcp_server.hybrid import (
     hybrid_open,
     hybrid_auth_seal,
     hybrid_auth_open,
+    hybrid_auth_verify,
     _fingerprint_public_key,
 )
 from pqc_mcp_server.key_store import (
@@ -194,6 +195,21 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
         arguments["envelope"],
         classical_sk,
         pqc_sk,
+        expected_sender_public_key=expected_pk,
+        expected_sender_fingerprint=expected_fp,
+    )
+
+
+def handle_hybrid_auth_verify(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Verify sender signature without decrypting. No secret keys needed."""
+    expected_pk = (
+        _b64(arguments["expected_sender_public_key"])
+        if "expected_sender_public_key" in arguments
+        else None
+    )
+    expected_fp = arguments.get("expected_sender_fingerprint")
+    return hybrid_auth_verify(
+        arguments["envelope"],
         expected_sender_public_key=expected_pk,
         expected_sender_fingerprint=expected_fp,
     )

@@ -120,6 +120,18 @@ def handle_generate_keypair(arguments: dict[str, Any]) -> dict[str, Any]:
             "fingerprint": fp,
             "fingerprint_algorithm": "SHA3-256",
         }
+
+    # Without store_as: warn about secret exposure, allow opt-out
+    if not arguments.get("include_secret_key", True):
+        result.pop("secret_key", None)
+        result.pop("secret_key_size", None)
+        result["secret_key_redacted"] = True
+        result["hint"] = "Use store_as to store keys as opaque handles (recommended)"
+    else:
+        result["warning"] = (
+            "Secret key is included in this response. Use store_as parameter "
+            "to store keys as opaque handles and prevent secret exposure."
+        )
     return result
 
 

@@ -92,6 +92,7 @@ if HAS_HYBRID:
         handle_hybrid_open,
         handle_hybrid_auth_seal,
         handle_hybrid_auth_open,
+        handle_hybrid_auth_verify,
         handle_envelope_inspect,
     )
     from pqc_mcp_server.key_store import (
@@ -110,6 +111,7 @@ if HAS_HYBRID:
         "pqc_hybrid_open": handle_hybrid_open,
         "pqc_hybrid_auth_seal": handle_hybrid_auth_seal,
         "pqc_hybrid_auth_open": handle_hybrid_auth_open,
+        "pqc_hybrid_auth_verify": handle_hybrid_auth_verify,
         "pqc_envelope_inspect": handle_envelope_inspect,
         "pqc_key_store_save": handle_key_store_save,
         "pqc_key_store_load": handle_key_store_load,

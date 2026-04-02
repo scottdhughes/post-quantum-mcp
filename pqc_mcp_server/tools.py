@@ -54,6 +54,10 @@ PQC_TOOLS: list[Tool] = [
                     "type": "boolean",
                     "description": "If true, overwrite an existing stored key with the same name",
                 },
+                "include_secret_key": {
+                    "type": "boolean",
+                    "description": "If false, redact secret key from response (default true for backwards compat; use store_as instead for opaque handles)",
+                },
             },
             "required": ["algorithm"],
         },
@@ -362,6 +366,28 @@ PQC_TOOLS: list[Tool] = [
                 "key_store_name": {
                     "type": "string",
                     "description": "Name of stored hybrid key bundle",
+                },
+            },
+            "required": ["envelope"],
+        },
+    ),
+    Tool(
+        name="pqc_hybrid_auth_verify",
+        description="Verify sender signature on an authenticated envelope WITHOUT decrypting. No secret keys needed. Checks sender binding, fingerprint consistency, ML-DSA-65 signature, and timestamp freshness.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "envelope": {
+                    "type": "object",
+                    "description": "Authenticated envelope from pqc_hybrid_auth_seal",
+                },
+                "expected_sender_public_key": {
+                    "type": "string",
+                    "description": "Base64-encoded ML-DSA-65 public key (exactly one of this or expected_sender_fingerprint required)",
+                },
+                "expected_sender_fingerprint": {
+                    "type": "string",
+                    "description": "SHA3-256 hex fingerprint of sender public key",
                 },
             },
             "required": ["envelope"],

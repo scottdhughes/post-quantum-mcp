@@ -542,3 +542,121 @@ def hybrid_auth_open(
     result["sender_signature_algorithm"] = sig_alg
     result["authenticated"] = True
     return result
+
+
+def hybrid_auth_verify(
+    envelope: dict[str, Any],
+    expected_sender_public_key: bytes | None = None,
+    expected_sender_fingerprint: str | None = None,
+    max_age_seconds: int = _MAX_ENVELOPE_AGE_SECONDS,
+) -> dict[str, Any]:
+    """Verify sender signature without decrypting. No secret keys needed.
+
+    Performs all verification steps from hybrid_auth_open (sender binding,
+    fingerprint consistency, signature verification, timestamp freshness)
+    but does NOT decrypt the AEAD ciphertext. Useful for gateways, relays,
+    or pre-screening envelopes before committing to decryption.
+    """
+    # Require exactly one sender binding
+    if expected_sender_public_key is None and expected_sender_fingerprint is None:
+        raise SenderVerificationError(
+            "Must provide expected_sender_public_key or expected_sender_fingerprint"
+        )
+    if expected_sender_public_key is not None and expected_sender_fingerprint is not None:
+        raise SenderVerificationError(
+            "Provide exactly one of expected_sender_public_key or expected_sender_fingerprint, not both"
+        )
+
+    # Validate header fields
+    if envelope.get("version") not in _ACCEPTED_VERSIONS:
+        raise ValueError(f"Unsupported envelope version: {envelope.get('version')}")
+    if envelope.get("suite") != SUITE:
+        raise ValueError(f"Unsupported envelope suite: {envelope.get('suite')}")
+    sig_alg = envelope.get("sender_signature_algorithm", "")
+    if not sig_alg:
+        raise ValueError("Envelope is not authenticated (no sender_signature_algorithm)")
+    if sig_alg != DEFAULT_SIG_ALGORITHM:
+        raise ValueError(f"Unsupported sender signature algorithm: {sig_alg}")
+
+    # Verify required auth fields exist before accessing them
+    for field in ("sender_public_key", "sender_key_fingerprint", "signature",
+                  "recipient_classical_key_fingerprint", "recipient_pqc_key_fingerprint"):
+        if field not in envelope:
+            raise ValueError(f"Missing required authenticated envelope field: {field}")
+
+    # Decode sender public key from envelope
+    sender_pk = base64.b64decode(envelope["sender_public_key"], validate=True)
+    envelope_fp = envelope["sender_key_fingerprint"]
+
+    # Verify embedded fingerprint is consistent with embedded public key
+    recomputed_fp = _fingerprint_public_key(sender_pk)
+    if recomputed_fp != envelope_fp:
+        raise SenderVerificationError(
+            "Envelope sender_key_fingerprint is inconsistent with sender_public_key"
+        )
+
+    # Verify sender binding
+    if expected_sender_public_key is not None:
+        if sender_pk != expected_sender_public_key:
+            raise SenderVerificationError("Sender public key does not match expected key")
+    else:
+        if envelope_fp != expected_sender_fingerprint:
+            raise SenderVerificationError(
+                "Sender key fingerprint does not match expected fingerprint"
+            )
+
+    # Decode envelope fields for transcript reconstruction
+    epk_bytes = base64.b64decode(envelope["x25519_ephemeral_public_key"], validate=True)
+    pqc_ct_bytes = base64.b64decode(envelope["pqc_ciphertext"], validate=True)
+    aead_ct_bytes = base64.b64decode(envelope["ciphertext"], validate=True)
+    signature = base64.b64decode(envelope["signature"], validate=True)
+
+    # Extract timestamp (backwards-compatible)
+    envelope_timestamp = envelope.get("timestamp", "")
+    timestamp_bytes = str(envelope_timestamp).encode() if envelope_timestamp else b""
+
+    # Reconstruct canonical transcript
+    transcript = _build_auth_transcript(
+        version=envelope["version"].encode(),
+        suite=envelope["suite"].encode(),
+        sig_algorithm=sig_alg.encode(),
+        sender_pk=sender_pk,
+        sender_fp=envelope_fp.encode(),
+        recipient_classical_fp=envelope["recipient_classical_key_fingerprint"].encode(),
+        recipient_pqc_fp=envelope["recipient_pqc_key_fingerprint"].encode(),
+        epk_x25519=epk_bytes,
+        pqc_ciphertext=pqc_ct_bytes,
+        aead_ciphertext=aead_ct_bytes,
+        timestamp=timestamp_bytes,
+    )
+
+    # Verify signature
+    sig_verifier = oqs.Signature(sig_alg)
+    is_valid = sig_verifier.verify(transcript, signature, sender_pk)
+    if not is_valid:
+        raise SenderVerificationError("Signature verification failed")
+
+    # Timestamp freshness (after signature — now trustworthy)
+    if envelope_timestamp and max_age_seconds > 0:
+        try:
+            age = time.time() - int(envelope_timestamp)
+            if age > max_age_seconds:
+                raise ValueError(
+                    f"Envelope is stale ({int(age)}s old, max {max_age_seconds}s). "
+                    "Possible replay attack."
+                )
+            if age < -300:
+                raise ValueError("Envelope timestamp is in the future. Clock skew or tampering.")
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"Invalid envelope timestamp: {exc}") from exc
+
+    return {
+        "verified": True,
+        "sender_key_fingerprint": envelope_fp,
+        "sender_signature_algorithm": sig_alg,
+        "recipient_classical_key_fingerprint": envelope["recipient_classical_key_fingerprint"],
+        "recipient_pqc_key_fingerprint": envelope["recipient_pqc_key_fingerprint"],
+        "version": envelope["version"],
+        "suite": envelope["suite"],
+        "timestamp": envelope_timestamp or None,
+    }
