@@ -24,6 +24,8 @@ from pqc_mcp_server.hybrid import (
     hybrid_auth_verify,
     _fingerprint_public_key,
 )
+from pqc_mcp_server.security_policy import get_policy
+from pqc_mcp_server.replay_cache import get_replay_cache, signature_digest
 from pqc_mcp_server.key_store import (
     store_from_keygen,
     _resolve_from_store,
@@ -71,6 +73,9 @@ def _resolve_hybrid_public(arguments: dict[str, Any], prefix: str = "") -> tuple
 
 def _resolve_hybrid_secret(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
     """Resolve hybrid recipient secret keys from store or raw args."""
+    get_policy().check_no_raw_secrets(
+        arguments, ["classical_secret_key", "pqc_secret_key"]
+    )
     has_store = "key_store_name" in arguments
     has_raw = "classical_secret_key" in arguments or "pqc_secret_key" in arguments
     if has_store and has_raw:
@@ -88,6 +93,9 @@ def _resolve_hybrid_secret(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
 
 def _resolve_sender(arguments: dict[str, Any]) -> tuple[bytes, bytes]:
     """Resolve sender signing keys from store or raw args. Returns (sk, pk)."""
+    get_policy().check_no_raw_secrets(
+        arguments, ["sender_secret_key"]
+    )
     has_store = "sender_key_store_name" in arguments
     has_raw = "sender_secret_key" in arguments or "sender_public_key" in arguments
     if has_store and has_raw:
@@ -184,6 +192,14 @@ def handle_hybrid_auth_seal(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
+    envelope = arguments["envelope"]
+
+    # Replay dedup: atomic check+mark (eliminates TOCTOU window)
+    cache = get_replay_cache()
+    digest = signature_digest(envelope)
+    if cache.check_and_mark(digest):
+        raise ValueError("Duplicate envelope (replay detected)")
+
     classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
     expected_pk = (
         _b64(arguments["expected_sender_public_key"])
@@ -192,7 +208,7 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
     )
     expected_fp = arguments.get("expected_sender_fingerprint")
     return hybrid_auth_open(
-        arguments["envelope"],
+        envelope,
         classical_sk,
         pqc_sk,
         expected_sender_public_key=expected_pk,
@@ -202,17 +218,26 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_hybrid_auth_verify(arguments: dict[str, Any]) -> dict[str, Any]:
     """Verify sender signature without decrypting. No secret keys needed."""
+    envelope = arguments["envelope"]
+
+    # Replay dedup: read-only check (does NOT mark — allows verify-then-open)
+    cache = get_replay_cache()
+    digest = signature_digest(envelope)
+    replay_seen = cache.check(digest)
+
     expected_pk = (
         _b64(arguments["expected_sender_public_key"])
         if "expected_sender_public_key" in arguments
         else None
     )
     expected_fp = arguments.get("expected_sender_fingerprint")
-    return hybrid_auth_verify(
-        arguments["envelope"],
+    result = hybrid_auth_verify(
+        envelope,
         expected_sender_public_key=expected_pk,
         expected_sender_fingerprint=expected_fp,
     )
+    result["replay_seen"] = replay_seen
+    return result
 
 
 def handle_envelope_inspect(arguments: dict[str, Any]) -> dict[str, Any]:

@@ -423,139 +423,20 @@ def hybrid_auth_seal(
 _MAX_ENVELOPE_AGE_SECONDS = 24 * 60 * 60
 
 
-def hybrid_auth_open(
-    envelope: dict[str, Any],
-    classical_sk: bytes,
-    pqc_sk: bytes,
-    expected_sender_public_key: bytes | None = None,
-    expected_sender_fingerprint: str | None = None,
-    max_age_seconds: int = _MAX_ENVELOPE_AGE_SECONDS,
-) -> dict[str, Any]:
-    """Verify sender + decrypt: authenticated hybrid envelope.
-
-    Sender verification happens BEFORE decryption. If the signature is
-    invalid, the AEAD layer is never reached.
-
-    Exactly one of expected_sender_public_key or expected_sender_fingerprint
-    must be provided. The recipient must NOT trust the envelope's embedded
-    sender key by itself.
-    """
-    # Require exactly one sender binding
-    if expected_sender_public_key is None and expected_sender_fingerprint is None:
-        raise SenderVerificationError(
-            "Must provide expected_sender_public_key or expected_sender_fingerprint"
-        )
-    if expected_sender_public_key is not None and expected_sender_fingerprint is not None:
-        raise SenderVerificationError(
-            "Provide exactly one of expected_sender_public_key or expected_sender_fingerprint, not both"
-        )
-
-    # Validate header fields
-    if envelope.get("version") not in _ACCEPTED_VERSIONS:
-        raise ValueError(f"Unsupported envelope version: {envelope.get('version')}")
-    if envelope.get("suite") != SUITE:
-        raise ValueError(f"Unsupported envelope suite: {envelope.get('suite')}")
-    sig_alg = envelope.get("sender_signature_algorithm", "")
-    if sig_alg != DEFAULT_SIG_ALGORITHM:
-        raise ValueError(f"Unsupported sender signature algorithm: {sig_alg}")
-
-    # Decode sender public key from envelope
-    sender_pk = base64.b64decode(envelope["sender_public_key"], validate=True)
-    envelope_fp = envelope["sender_key_fingerprint"]
-
-    # Verify embedded fingerprint is consistent with embedded public key
-    recomputed_fp = _fingerprint_public_key(sender_pk)
-    if recomputed_fp != envelope_fp:
-        raise SenderVerificationError(
-            "Envelope sender_key_fingerprint is inconsistent with sender_public_key"
-        )
-
-    # Verify sender binding BEFORE signature verification
-    if expected_sender_public_key is not None:
-        if sender_pk != expected_sender_public_key:
-            raise SenderVerificationError("Sender public key does not match expected key")
-    else:
-        # expected_sender_fingerprint must be non-None here (enforced above)
-        if envelope_fp != expected_sender_fingerprint:
-            raise SenderVerificationError(
-                "Sender key fingerprint does not match expected fingerprint"
-            )
-
-    # Decode envelope fields for transcript reconstruction
-    epk_bytes = base64.b64decode(envelope["x25519_ephemeral_public_key"], validate=True)
-    pqc_ct_bytes = base64.b64decode(envelope["pqc_ciphertext"], validate=True)
-    aead_ct_bytes = base64.b64decode(envelope["ciphertext"], validate=True)
-    signature = base64.b64decode(envelope["signature"], validate=True)
-
-    # Extract timestamp for replay protection (backwards-compatible)
-    envelope_timestamp = envelope.get("timestamp", "")
-    timestamp_bytes = str(envelope_timestamp).encode() if envelope_timestamp else b""
-
-    # Reconstruct canonical transcript (timestamp included when present)
-    transcript = _build_auth_transcript(
-        version=envelope["version"].encode(),
-        suite=envelope["suite"].encode(),
-        sig_algorithm=sig_alg.encode(),
-        sender_pk=sender_pk,
-        sender_fp=envelope_fp.encode(),
-        recipient_classical_fp=envelope["recipient_classical_key_fingerprint"].encode(),
-        recipient_pqc_fp=envelope["recipient_pqc_key_fingerprint"].encode(),
-        epk_x25519=epk_bytes,
-        pqc_ciphertext=pqc_ct_bytes,
-        aead_ciphertext=aead_ct_bytes,
-        timestamp=timestamp_bytes,
-    )
-
-    # Verify signature BEFORE decryption
-    sig_verifier = oqs.Signature(sig_alg)
-    is_valid = sig_verifier.verify(transcript, signature, sender_pk)
-    if not is_valid:
-        raise SenderVerificationError("Signature verification failed")
-
-    # Replay protection: check timestamp freshness AFTER signature verification
-    # (timestamp is now trustworthy because it's covered by the signature)
-    if envelope_timestamp and max_age_seconds > 0:
-        try:
-            age = time.time() - int(envelope_timestamp)
-            if age > max_age_seconds:
-                raise ValueError(
-                    f"Envelope is stale ({int(age)}s old, max {max_age_seconds}s). "
-                    "Possible replay attack."
-                )
-            if age < -300:  # 5 min clock skew tolerance
-                raise ValueError("Envelope timestamp is in the future. Clock skew or tampering.")
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ValueError(f"Invalid envelope timestamp: {exc}") from exc
-
-    # Signature valid — now decrypt via the existing anonymous open path
-    # Build the inner anonymous envelope for hybrid_open
-    inner_envelope = {
-        "version": envelope["version"],
-        "suite": envelope["suite"],
-        "x25519_ephemeral_public_key": envelope["x25519_ephemeral_public_key"],
-        "pqc_ciphertext": envelope["pqc_ciphertext"],
-        "ciphertext": envelope["ciphertext"],
-    }
-    result = hybrid_open(inner_envelope, classical_sk, pqc_sk)
-
-    result["sender_key_fingerprint"] = envelope_fp
-    result["sender_signature_algorithm"] = sig_alg
-    result["authenticated"] = True
-    return result
-
-
-def hybrid_auth_verify(
+def _verify_authenticated_envelope(
     envelope: dict[str, Any],
     expected_sender_public_key: bytes | None = None,
     expected_sender_fingerprint: str | None = None,
     max_age_seconds: int = _MAX_ENVELOPE_AGE_SECONDS,
 ) -> dict[str, Any]:
-    """Verify sender signature without decrypting. No secret keys needed.
+    """Shared verification logic for authenticated envelopes.
 
-    Performs all verification steps from hybrid_auth_open (sender binding,
-    fingerprint consistency, signature verification, timestamp freshness)
-    but does NOT decrypt the AEAD ciphertext. Useful for gateways, relays,
-    or pre-screening envelopes before committing to decryption.
+    Performs: sender binding, header validation, field-presence checks,
+    fingerprint consistency, ML-DSA-65 signature verification, and
+    timestamp freshness. Returns verification metadata dict.
+
+    Used by both hybrid_auth_open (verify then decrypt) and
+    hybrid_auth_verify (verify only, no secret keys needed).
     """
     # Require exactly one sender binding
     if expected_sender_public_key is None and expected_sender_fingerprint is None:
@@ -595,7 +476,7 @@ def hybrid_auth_verify(
             "Envelope sender_key_fingerprint is inconsistent with sender_public_key"
         )
 
-    # Verify sender binding
+    # Verify sender binding BEFORE signature verification
     if expected_sender_public_key is not None:
         if sender_pk != expected_sender_public_key:
             raise SenderVerificationError("Sender public key does not match expected key")
@@ -611,11 +492,11 @@ def hybrid_auth_verify(
     aead_ct_bytes = base64.b64decode(envelope["ciphertext"], validate=True)
     signature = base64.b64decode(envelope["signature"], validate=True)
 
-    # Extract timestamp (backwards-compatible)
+    # Extract timestamp for replay protection (backwards-compatible)
     envelope_timestamp = envelope.get("timestamp", "")
     timestamp_bytes = str(envelope_timestamp).encode() if envelope_timestamp else b""
 
-    # Reconstruct canonical transcript
+    # Reconstruct canonical transcript (timestamp included when present)
     transcript = _build_auth_transcript(
         version=envelope["version"].encode(),
         suite=envelope["suite"].encode(),
@@ -636,7 +517,8 @@ def hybrid_auth_verify(
     if not is_valid:
         raise SenderVerificationError("Signature verification failed")
 
-    # Timestamp freshness (after signature — now trustworthy)
+    # Replay protection: check timestamp freshness AFTER signature verification
+    # (timestamp is now trustworthy because it's covered by the signature)
     if envelope_timestamp and max_age_seconds > 0:
         try:
             age = time.time() - int(envelope_timestamp)
@@ -645,13 +527,12 @@ def hybrid_auth_verify(
                     f"Envelope is stale ({int(age)}s old, max {max_age_seconds}s). "
                     "Possible replay attack."
                 )
-            if age < -300:
+            if age < -300:  # 5 min clock skew tolerance
                 raise ValueError("Envelope timestamp is in the future. Clock skew or tampering.")
         except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError(f"Invalid envelope timestamp: {exc}") from exc
 
     return {
-        "verified": True,
         "sender_key_fingerprint": envelope_fp,
         "sender_signature_algorithm": sig_alg,
         "recipient_classical_key_fingerprint": envelope["recipient_classical_key_fingerprint"],
@@ -660,3 +541,50 @@ def hybrid_auth_verify(
         "suite": envelope["suite"],
         "timestamp": envelope_timestamp or None,
     }
+
+
+def hybrid_auth_open(
+    envelope: dict[str, Any],
+    classical_sk: bytes,
+    pqc_sk: bytes,
+    expected_sender_public_key: bytes | None = None,
+    expected_sender_fingerprint: str | None = None,
+    max_age_seconds: int = _MAX_ENVELOPE_AGE_SECONDS,
+) -> dict[str, Any]:
+    """Verify sender + decrypt: authenticated hybrid envelope.
+
+    Sender verification happens BEFORE decryption. If the signature is
+    invalid, the AEAD layer is never reached.
+    """
+    verified = _verify_authenticated_envelope(
+        envelope, expected_sender_public_key, expected_sender_fingerprint, max_age_seconds,
+    )
+
+    # Signature valid — now decrypt via the existing anonymous open path
+    inner_envelope = {
+        "version": envelope["version"],
+        "suite": envelope["suite"],
+        "x25519_ephemeral_public_key": envelope["x25519_ephemeral_public_key"],
+        "pqc_ciphertext": envelope["pqc_ciphertext"],
+        "ciphertext": envelope["ciphertext"],
+    }
+    result = hybrid_open(inner_envelope, classical_sk, pqc_sk)
+
+    result["sender_key_fingerprint"] = verified["sender_key_fingerprint"]
+    result["sender_signature_algorithm"] = verified["sender_signature_algorithm"]
+    result["authenticated"] = True
+    return result
+
+
+def hybrid_auth_verify(
+    envelope: dict[str, Any],
+    expected_sender_public_key: bytes | None = None,
+    expected_sender_fingerprint: str | None = None,
+    max_age_seconds: int = _MAX_ENVELOPE_AGE_SECONDS,
+) -> dict[str, Any]:
+    """Verify sender signature without decrypting. No secret keys needed."""
+    verified = _verify_authenticated_envelope(
+        envelope, expected_sender_public_key, expected_sender_fingerprint, max_age_seconds,
+    )
+    verified["verified"] = True
+    return verified
