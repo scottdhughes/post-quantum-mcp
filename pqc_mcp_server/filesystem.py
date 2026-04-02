@@ -2,6 +2,11 @@
 
 Enforces restrictive permissions on directories and files that contain
 cryptographic material, contacts, or envelopes.
+
+These helpers are intended for use by the skill layer (quantum-seal plugin)
+and external code that manages ~/.pqc/ paths. The MCP server itself does
+not write to the filesystem — skills orchestrate file I/O via Claude's
+Write tool and should call these helpers to enforce permissions afterward.
 """
 
 import os

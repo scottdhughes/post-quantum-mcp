@@ -17,6 +17,7 @@ from pqc_mcp_server.key_store import (
 from pqc_mcp_server.handlers_pqc import handle_benchmark
 from pqc_mcp_server.handlers_hybrid import handle_envelope_inspect
 from pqc_mcp_server.hybrid import (
+    ENVELOPE_VERSION,
     hybrid_keygen,
     hybrid_seal,
     hybrid_auth_seal,
@@ -146,7 +147,7 @@ class TestEnvelopeInspect:
             base64.b64decode(keys["pqc"]["public_key"]),
         )
         result = handle_envelope_inspect({"envelope": envelope})
-        assert result["version"] == "pqc-mcp-v1"
+        assert result["version"] == ENVELOPE_VERSION
         assert result["suite"] == "mlkem768-x25519-sha3-256"
         assert result["authenticated"] is False
         assert result["ciphertext_size"] > 0
