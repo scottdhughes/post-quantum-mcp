@@ -551,8 +551,11 @@ class TestReplayProtection:
             )
 
     def test_timestamp_stripping_invalidates_signature(self):
-        """Removing the timestamp field must invalidate the signature
-        because the transcript was signed WITH the timestamp."""
+        """Removing the timestamp field must be rejected.
+
+        v2 envelopes require a timestamp for replay protection.
+        Stripping it is caught before the signature check.
+        """
         sender_sk, sender_pk = _make_sender_keys()
         recipient = _make_recipient_keys()
         envelope = hybrid_auth_seal(
@@ -563,8 +566,9 @@ class TestReplayProtection:
             sender_pk,
         )
         del envelope["timestamp"]
-        # Without timestamp, transcript differs from what was signed
-        with pytest.raises(SenderVerificationError, match="Signature verification failed"):
+        # v2 envelopes must include a timestamp; missing one is
+        # rejected before the signature check is reached.
+        with pytest.raises(ValueError, match="must include a timestamp"):
             hybrid_auth_open(
                 envelope,
                 base64.b64decode(recipient["classical"]["secret_key"]),

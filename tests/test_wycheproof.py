@@ -273,6 +273,20 @@ try:
 except ImportError:
     HAS_HYPOTHESIS = False
 
+    # Stubs so the class body can be parsed during collection
+    # even when hypothesis is not installed.
+    def given(**_kw):  # type: ignore[no-redef]
+        return lambda f: f
+
+    def settings(**_kw):  # type: ignore[no-redef]
+        return lambda f: f
+
+    def binary(**_kw):  # type: ignore[no-redef]
+        return None
+
+    class HealthCheck:  # type: ignore[no-redef]
+        function_scoped_fixture = None
+
 
 @pytest.mark.skipif(not HAS_HYPOTHESIS, reason="hypothesis not installed")
 class TestHypothesisFuzzing:
