@@ -279,8 +279,7 @@ PQC_TOOLS: list[Tool] = [
                 "plaintext": {
                     "type": "string",
                     "description": (
-                        "UTF-8 string to encrypt"
-                        " (mutually exclusive with plaintext_base64)"
+                        "UTF-8 string to encrypt (mutually exclusive with plaintext_base64)"
                     ),
                 },
                 "plaintext_base64": {
@@ -340,8 +339,7 @@ PQC_TOOLS: list[Tool] = [
                 "plaintext": {
                     "type": "string",
                     "description": (
-                        "UTF-8 string to encrypt"
-                        " (mutually exclusive with plaintext_base64)"
+                        "UTF-8 string to encrypt (mutually exclusive with plaintext_base64)"
                     ),
                 },
                 "plaintext_base64": {
