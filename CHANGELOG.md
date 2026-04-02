@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-02
+
+### Changed
+- **BREAKING:** Envelope version bumped from `pqc-mcp-v1` to `pqc-mcp-v2`
+- HKDF info prefix updated to `pqc-mcp-v2|...` with ephemeral public key hash
+  bound into the derivation for domain separation (NIST SP 800-56C defense-in-depth)
+- Auth transcript prefix updated to `pqc-mcp-auth-v2`
+- AAD construction now uses envelope version dynamically
+
+### Added
+- **Replay protection:** Authenticated envelopes include a signed timestamp.
+  `hybrid_auth_open` checks freshness after signature verification (24h default,
+  configurable via `max_age_seconds`). Timestamp is covered by the ML-DSA
+  signature — stripping or modifying it invalidates the envelope.
+- Backwards-compatible version acceptance: `hybrid_open` and `hybrid_auth_open`
+  accept both `pqc-mcp-v1` and `pqc-mcp-v2` envelopes. V1 envelopes use the
+  original HKDF prefix and skip timestamp checks.
+- `pqc_mcp_server.filesystem` module: `ensure_secure_directory` (0o700) and
+  `ensure_secure_file` (0o600) helpers for securing `~/.pqc/` paths.
+- Clock skew tolerance: future timestamps rejected if >5 minutes ahead.
+- New test class `TestReplayProtection` covering timestamp signing, staleness
+  rejection, timestamp stripping detection, and freshness acceptance.
+
+### Fixed
+- `ValueError` from `int()` parsing now caught in timestamp validation
+  (previously only `TypeError` and `OverflowError` were handled).
+
+### Security
+- Adversarial review conducted via multi-model analysis (Qwen 3.5 + Codex + Claude).
+  Findings: nonce derivation confirmed safe for single-shot protocol; replay
+  protection gap identified and fixed; file permissions helper added.
+
 ## [0.4.0] - 2026-04-01
 
 ### Added

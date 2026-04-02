@@ -21,6 +21,7 @@ liboqs is research/prototyping software and is not recommended for production.
 import base64
 import hashlib
 import hmac
+import time
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -41,9 +42,13 @@ import oqs
 
 SUITE = "mlkem768-x25519-sha3-256"
 COMBINER_LABEL = b"\x5c\x2e\x2f\x2f\x5e\x5c"  # \.//^\ — LAMPS id-MLKEM768-X25519-SHA3-256
-_HKDF_INFO_PREFIX = b"pqc-mcp-v1|mlkem768-x25519-sha3-256|"
+ENVELOPE_VERSION = "pqc-mcp-v2"
+_ENVELOPE_VERSION_V1 = "pqc-mcp-v1"  # accepted on open for backwards compat
+_HKDF_INFO_PREFIX_V2 = b"pqc-mcp-v2|mlkem768-x25519-sha3-256|"
+_HKDF_INFO_PREFIX_V1 = b"pqc-mcp-v1|mlkem768-x25519-sha3-256|"
 DEFAULT_SIG_ALGORITHM = "ML-DSA-65"
-_AUTH_TRANSCRIPT_PREFIX = b"pqc-mcp-auth-v1\x00"  # 16 bytes, null-terminated
+_AUTH_TRANSCRIPT_PREFIX = b"pqc-mcp-auth-v2\x00"  # 16 bytes, null-terminated
+_ACCEPTED_VERSIONS = {ENVELOPE_VERSION, _ENVELOPE_VERSION_V1}
 
 
 def _validate_x25519_key(key_bytes: bytes, label: str) -> None:
@@ -71,29 +76,42 @@ def _kem_combine(
     return hashlib.sha3_256(ss_mlkem + ss_x25519 + epk_x25519 + pk_x25519 + COMBINER_LABEL).digest()
 
 
-def _derive_aead_key_and_nonce(combined_ss: bytes) -> tuple[bytes, bytes]:
-    """HKDF Extract+Expand to derive AES-256-GCM key and deterministic nonce."""
+def _derive_aead_key_and_nonce(
+    combined_ss: bytes, epk_bytes: bytes = b"", version: str = ""
+) -> tuple[bytes, bytes]:
+    """HKDF Extract+Expand to derive AES-256-GCM key and deterministic nonce.
+
+    v2: epk_bytes is included in the HKDF info for domain separation — ensures
+    the derived key/nonce are explicitly bound to the ephemeral public key
+    even though combined_ss already incorporates it via the KEM combiner.
+    Defense-in-depth against RNG failure scenarios (NIST SP 800-56C).
+
+    v1: original derivation without epk domain separation (backwards compat).
+    """
     salt = b"\x00" * 32
     prk = hmac.new(key=salt, msg=combined_ss, digestmod=hashlib.sha256).digest()
 
+    is_v1 = version == _ENVELOPE_VERSION_V1
+    prefix = _HKDF_INFO_PREFIX_V1 if is_v1 else _HKDF_INFO_PREFIX_V2
+    epk_domain = b"" if is_v1 else (hashlib.sha256(epk_bytes).digest() if epk_bytes else b"")
+
     aes_key = HKDFExpand(
-        algorithm=SHA256(), length=32, info=_HKDF_INFO_PREFIX + b"aes-256-gcm-key"
+        algorithm=SHA256(), length=32,
+        info=prefix + b"aes-256-gcm-key" + epk_domain,
     ).derive(prk)
 
     nonce = HKDFExpand(
-        algorithm=SHA256(), length=12, info=_HKDF_INFO_PREFIX + b"aes-256-gcm-nonce"
+        algorithm=SHA256(), length=12,
+        info=prefix + b"aes-256-gcm-nonce" + epk_domain,
     ).derive(prk)
 
     return aes_key, nonce
 
 
-def _build_aad(epk_x25519: bytes, pqc_ciphertext: bytes) -> bytes:
-    """Canonical AAD: version|suite|epk|pqc_ct.
-
-    Layout: b"pqc-mcp-v1" (10) + b"|mlkem768-x25519-sha3-256|" (26) + epk (32) + ct (variable)
-    Total prefix before epk: 36 bytes.
-    """
-    return b"pqc-mcp-v1" + b"|mlkem768-x25519-sha3-256|" + epk_x25519 + pqc_ciphertext
+def _build_aad(epk_x25519: bytes, pqc_ciphertext: bytes, version: str = "") -> bytes:
+    """Canonical AAD: version|suite|epk|pqc_ct."""
+    ver = (version or ENVELOPE_VERSION).encode()
+    return ver + b"|" + SUITE.encode() + b"|" + epk_x25519 + pqc_ciphertext
 
 
 class SenderVerificationError(Exception):
@@ -121,12 +139,15 @@ def _build_auth_transcript(
     epk_x25519: bytes,
     pqc_ciphertext: bytes,
     aead_ciphertext: bytes,
+    timestamp: bytes = b"",
 ) -> bytes:
     """Build canonical binary transcript for authenticated envelope signature.
 
     Fixed domain prefix + length-prefixed fields. Deterministic and unambiguous.
+    Timestamp is included when present to bind freshness to the signature,
+    preventing an attacker from stripping/modifying it without invalidation.
     """
-    return (
+    transcript = (
         _AUTH_TRANSCRIPT_PREFIX
         + _len_prefix(version)
         + _len_prefix(suite)
@@ -139,6 +160,9 @@ def _build_auth_transcript(
         + _len_prefix(pqc_ciphertext)
         + _len_prefix(aead_ciphertext)
     )
+    if timestamp:
+        transcript += _len_prefix(timestamp)
+    return transcript
 
 
 def hybrid_keygen() -> dict[str, Any]:
@@ -258,8 +282,8 @@ def hybrid_seal(
 
     combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, recipient_classical_pk)
 
-    # Derive AEAD key + nonce
-    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss)
+    # Derive AEAD key + nonce (epk bound via domain separation)
+    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss, eph_pk_bytes)
 
     # Encrypt with AAD
     aad = _build_aad(eph_pk_bytes, pqc_ct)
@@ -267,7 +291,7 @@ def hybrid_seal(
     ciphertext = aesgcm.encrypt(nonce, plaintext_bytes, aad)
 
     return {
-        "version": "pqc-mcp-v1",
+        "version": ENVELOPE_VERSION,
         "suite": SUITE,
         "x25519_ephemeral_public_key": base64.b64encode(eph_pk_bytes).decode(),
         "pqc_ciphertext": base64.b64encode(pqc_ct).decode(),
@@ -282,7 +306,7 @@ def hybrid_open(
 ) -> dict[str, Any]:
     """Decrypt a sealed envelope."""
     # Validate transmitted header fields before any crypto
-    if envelope.get("version") != "pqc-mcp-v1":
+    if envelope.get("version") not in _ACCEPTED_VERSIONS:
         raise ValueError(f"Unsupported envelope version: {envelope.get('version')}")
     if envelope.get("suite") != SUITE:
         raise ValueError(f"Unsupported envelope suite: {envelope.get('suite')}")
@@ -308,12 +332,13 @@ def hybrid_open(
     kem = oqs.KeyEncapsulation("ML-KEM-768", pqc_sk)
     ss_mlkem = kem.decap_secret(pqc_ct)
 
-    # Combine + derive AEAD key + nonce
+    # Combine + derive AEAD key + nonce (version-aware for backwards compat)
+    env_version = envelope["version"]
     combined_ss = _kem_combine(ss_mlkem, ss_x25519, epk_bytes, pk_x25519)
-    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss)
+    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss, epk_bytes, version=env_version)
 
     # Decrypt with AAD verification
-    aad = _build_aad(epk_bytes, pqc_ct)
+    aad = _build_aad(epk_bytes, pqc_ct, version=env_version)
     aesgcm = AESGCM(aes_key)
     plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, aad)
 
@@ -347,6 +372,9 @@ def hybrid_auth_seal(
     # Seal (anonymous confidentiality layer — reuse existing core)
     envelope = hybrid_seal(plaintext_bytes, recipient_classical_pk, recipient_pqc_pk)
 
+    # Timestamp for replay protection (signed as part of transcript)
+    timestamp = str(int(time.time()))
+
     # Compute fingerprints
     sender_fp = _fingerprint_public_key(sender_sig_pk)
     recipient_classical_fp = _fingerprint_public_key(recipient_classical_pk)
@@ -356,7 +384,7 @@ def hybrid_auth_seal(
     pqc_ct_bytes = base64.b64decode(envelope["pqc_ciphertext"])
     aead_ct_bytes = base64.b64decode(envelope["ciphertext"])
 
-    # Build canonical transcript
+    # Build canonical transcript (timestamp included — bound to signature)
     transcript = _build_auth_transcript(
         version=envelope["version"].encode(),
         suite=envelope["suite"].encode(),
@@ -368,6 +396,7 @@ def hybrid_auth_seal(
         epk_x25519=epk_bytes,
         pqc_ciphertext=pqc_ct_bytes,
         aead_ciphertext=aead_ct_bytes,
+        timestamp=timestamp.encode(),
     )
 
     # Sign transcript with ML-DSA
@@ -385,8 +414,13 @@ def hybrid_auth_seal(
         "x25519_ephemeral_public_key": envelope["x25519_ephemeral_public_key"],
         "pqc_ciphertext": envelope["pqc_ciphertext"],
         "ciphertext": envelope["ciphertext"],
+        "timestamp": timestamp,
         "signature": base64.b64encode(signature).decode(),
     }
+
+
+# Default max envelope age for replay protection (24 hours)
+_MAX_ENVELOPE_AGE_SECONDS = 24 * 60 * 60
 
 
 def hybrid_auth_open(
@@ -395,6 +429,7 @@ def hybrid_auth_open(
     pqc_sk: bytes,
     expected_sender_public_key: bytes | None = None,
     expected_sender_fingerprint: str | None = None,
+    max_age_seconds: int = _MAX_ENVELOPE_AGE_SECONDS,
 ) -> dict[str, Any]:
     """Verify sender + decrypt: authenticated hybrid envelope.
 
@@ -416,7 +451,7 @@ def hybrid_auth_open(
         )
 
     # Validate header fields
-    if envelope.get("version") != "pqc-mcp-v1":
+    if envelope.get("version") not in _ACCEPTED_VERSIONS:
         raise ValueError(f"Unsupported envelope version: {envelope.get('version')}")
     if envelope.get("suite") != SUITE:
         raise ValueError(f"Unsupported envelope suite: {envelope.get('suite')}")
@@ -452,7 +487,11 @@ def hybrid_auth_open(
     aead_ct_bytes = base64.b64decode(envelope["ciphertext"], validate=True)
     signature = base64.b64decode(envelope["signature"], validate=True)
 
-    # Reconstruct canonical transcript
+    # Extract timestamp for replay protection (backwards-compatible)
+    envelope_timestamp = envelope.get("timestamp", "")
+    timestamp_bytes = str(envelope_timestamp).encode() if envelope_timestamp else b""
+
+    # Reconstruct canonical transcript (timestamp included when present)
     transcript = _build_auth_transcript(
         version=envelope["version"].encode(),
         suite=envelope["suite"].encode(),
@@ -464,6 +503,7 @@ def hybrid_auth_open(
         epk_x25519=epk_bytes,
         pqc_ciphertext=pqc_ct_bytes,
         aead_ciphertext=aead_ct_bytes,
+        timestamp=timestamp_bytes,
     )
 
     # Verify signature BEFORE decryption
@@ -471,6 +511,21 @@ def hybrid_auth_open(
     is_valid = sig_verifier.verify(transcript, signature, sender_pk)
     if not is_valid:
         raise SenderVerificationError("Signature verification failed")
+
+    # Replay protection: check timestamp freshness AFTER signature verification
+    # (timestamp is now trustworthy because it's covered by the signature)
+    if envelope_timestamp and max_age_seconds > 0:
+        try:
+            age = time.time() - int(envelope_timestamp)
+            if age > max_age_seconds:
+                raise ValueError(
+                    f"Envelope is stale ({int(age)}s old, max {max_age_seconds}s). "
+                    "Possible replay attack."
+                )
+            if age < -300:  # 5 min clock skew tolerance
+                raise ValueError("Envelope timestamp is in the future. Clock skew or tampering.")
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"Invalid envelope timestamp: {exc}") from exc
 
     # Signature valid — now decrypt via the existing anonymous open path
     # Build the inner anonymous envelope for hybrid_open

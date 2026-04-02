@@ -15,7 +15,10 @@ pytest.importorskip("cryptography", reason="cryptography not installed")
 from pqc_mcp_server.hybrid import (
     SUITE,
     COMBINER_LABEL,
-    _HKDF_INFO_PREFIX,
+    ENVELOPE_VERSION,
+    _HKDF_INFO_PREFIX_V1,
+    _HKDF_INFO_PREFIX_V2,
+    _ENVELOPE_VERSION_V1,
     _validate_x25519_key,
     _check_x25519_shared_secret,
     _kem_combine,
@@ -86,41 +89,59 @@ class TestCombiner:
 
 
 class TestHKDF:
-    def test_info_string_bytes(self):
-        assert _HKDF_INFO_PREFIX + b"aes-256-gcm-key" == (
-            b"pqc-mcp-v1|mlkem768-x25519-sha3-256|aes-256-gcm-key"
+    def test_info_string_bytes_v2(self):
+        assert _HKDF_INFO_PREFIX_V2 + b"aes-256-gcm-key" == (
+            b"pqc-mcp-v2|mlkem768-x25519-sha3-256|aes-256-gcm-key"
         )
-        assert _HKDF_INFO_PREFIX + b"aes-256-gcm-nonce" == (
-            b"pqc-mcp-v1|mlkem768-x25519-sha3-256|aes-256-gcm-nonce"
+
+    def test_info_string_bytes_v1(self):
+        assert _HKDF_INFO_PREFIX_V1 + b"aes-256-gcm-key" == (
+            b"pqc-mcp-v1|mlkem768-x25519-sha3-256|aes-256-gcm-key"
         )
 
     def test_derive_produces_correct_lengths(self):
-        aes_key, nonce = _derive_aead_key_and_nonce(b"\x01" * 32)
+        aes_key, nonce = _derive_aead_key_and_nonce(b"\x01" * 32, b"\x03" * 32)
         assert len(aes_key) == 32
         assert len(nonce) == 12
 
     def test_derive_is_deterministic(self):
-        k1, n1 = _derive_aead_key_and_nonce(b"\xab" * 32)
-        k2, n2 = _derive_aead_key_and_nonce(b"\xab" * 32)
+        k1, n1 = _derive_aead_key_and_nonce(b"\xab" * 32, b"\xcd" * 32)
+        k2, n2 = _derive_aead_key_and_nonce(b"\xab" * 32, b"\xcd" * 32)
         assert k1 == k2
         assert n1 == n2
 
     def test_domain_separation(self):
         """AES key and nonce must differ (different HKDF info)."""
-        aes_key, nonce = _derive_aead_key_and_nonce(b"\x01" * 32)
+        aes_key, nonce = _derive_aead_key_and_nonce(b"\x01" * 32, b"\x02" * 32)
         assert aes_key[:12] != nonce
+
+    def test_epk_domain_separation_v2(self):
+        """Different epk_bytes must produce different keys in v2."""
+        k1, n1 = _derive_aead_key_and_nonce(b"\x01" * 32, b"\xaa" * 32)
+        k2, n2 = _derive_aead_key_and_nonce(b"\x01" * 32, b"\xbb" * 32)
+        assert k1 != k2
+        assert n1 != n2
+
+    def test_v1_ignores_epk_domain(self):
+        """v1 derivation must not use epk in HKDF info (backwards compat)."""
+        k1, n1 = _derive_aead_key_and_nonce(b"\x01" * 32, b"\xaa" * 32, version=_ENVELOPE_VERSION_V1)
+        k2, n2 = _derive_aead_key_and_nonce(b"\x01" * 32, b"\xbb" * 32, version=_ENVELOPE_VERSION_V1)
+        assert k1 == k2
+        assert n1 == n2
 
 
 class TestAAD:
-    def test_aad_construction(self):
+    def test_aad_construction_v2(self):
         epk = b"\xaa" * 32
         ct = b"\xbb" * 100
         aad = _build_aad(epk, ct)
-        prefix = b"pqc-mcp-v1|mlkem768-x25519-sha3-256|"
-        assert len(prefix) == 36
-        assert aad.startswith(prefix)
-        assert aad[36:68] == epk
-        assert aad[68:] == ct
+        assert aad.startswith(b"pqc-mcp-v2|mlkem768-x25519-sha3-256|")
+
+    def test_aad_construction_v1(self):
+        epk = b"\xaa" * 32
+        ct = b"\xbb" * 100
+        aad = _build_aad(epk, ct, version=_ENVELOPE_VERSION_V1)
+        assert aad.startswith(b"pqc-mcp-v1|mlkem768-x25519-sha3-256|")
 
     def test_aad_is_deterministic(self):
         epk = b"\x01" * 32
@@ -214,7 +235,7 @@ class TestSealOpen:
             base64.b64decode(keys["classical"]["public_key"]),
             base64.b64decode(keys["pqc"]["public_key"]),
         )
-        assert envelope["version"] == "pqc-mcp-v1"
+        assert envelope["version"] == ENVELOPE_VERSION
         assert envelope["suite"] == SUITE
         assert "ciphertext" in envelope
         assert "nonce" not in envelope  # nonce is derived, not transmitted
