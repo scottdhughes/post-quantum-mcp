@@ -100,6 +100,12 @@ def _kem_combine(
     """SHA3-256 KEM combiner per LAMPS id-MLKEM768-X25519-SHA3-256.
 
     combined_ss = SHA3-256(ss_mlkem || ss_x25519 || epk_x25519 || pk_x25519 || label)
+
+    SECURITY NOTE (Combiner Input Boundary): Inputs are concatenated without
+    length prefixes per the LAMPS spec. This is safe because all inputs are
+    fixed-size (ML-KEM-768 ss=32B, X25519 ss=32B, epk=32B, pk=32B, label=6B).
+    If a future algorithm produced variable-length shared secrets, this combiner
+    would need length-prefixed inputs to prevent boundary ambiguity collisions.
     """
     return hashlib.sha3_256(ss_mlkem + ss_x25519 + epk_x25519 + pk_x25519 + COMBINER_LABEL).digest()
 
@@ -510,7 +516,12 @@ def _verify_authenticated_envelope(
             "Envelope sender_key_fingerprint is inconsistent with sender_public_key"
         )
 
-    # Verify sender binding BEFORE signature verification
+    # Verify sender binding BEFORE signature verification.
+    # SECURITY NOTE (Timing Oracle): This check is faster than signature
+    # verification, creating a distinguishable timing difference. An attacker
+    # can determine if a fingerprint is correct by measuring response time.
+    # This reveals contact membership (metadata) but not key material.
+    # Acceptable for research; production should use uniform error timing.
     if expected_sender_public_key is not None:
         if sender_pk != expected_sender_public_key:
             raise SenderVerificationError("Sender public key does not match expected key")
@@ -526,8 +537,20 @@ def _verify_authenticated_envelope(
     aead_ct_bytes = base64.b64decode(envelope["ciphertext"], validate=True)
     signature = base64.b64decode(envelope["signature"], validate=True)
 
-    # Extract timestamp for replay protection (backwards-compatible)
+    # Extract timestamp for replay protection
+    # SECURITY: v2 envelopes MUST have a timestamp. A malicious sender could
+    # otherwise omit it to create eternally-replayable envelopes (Ghost
+    # Timestamp Replay — Codex adversarial finding). v1 envelopes are exempt.
     envelope_timestamp = envelope.get("timestamp", "")
+    is_v2 = envelope.get("version") == ENVELOPE_VERSION
+    if is_v2 and not envelope_timestamp:
+        raise ValueError(
+            "v2 envelopes must include a timestamp for replay protection. "
+            "Missing timestamp may indicate a forged or downgraded envelope."
+        )
+    # NOTE: v1 envelopes skip timestamp requirement (backwards compat).
+    # A sender could deliberately use v1 to avoid freshness checks.
+    # Mitigation: deprecate v1 acceptance in a future version.
     timestamp_bytes = str(envelope_timestamp).encode() if envelope_timestamp else b""
 
     # Reconstruct canonical transcript (timestamp included when present)
