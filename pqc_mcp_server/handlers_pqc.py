@@ -13,6 +13,8 @@ from typing import Any
 import oqs
 from oqs import MechanismNotSupportedError
 
+from pqc_mcp_server.security_policy import get_policy
+
 
 def _b64(value: str | bytes) -> bytes:
     """Strict base64 decode. Raises binascii.Error on invalid input."""
@@ -77,6 +79,13 @@ def handle_algorithm_info(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_generate_keypair(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
+
+    # When handle-only mode is enforced, require store_as
+    if get_policy().require_key_handles and "store_as" not in arguments:
+        raise ValueError(
+            "PQC_REQUIRE_KEY_HANDLES is enabled. Use store_as to generate "
+            "keys as opaque handles instead of receiving raw secret keys."
+        )
 
     try:
         kem = oqs.KeyEncapsulation(alg)
@@ -221,6 +230,7 @@ def handle_encapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_decapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
+    get_policy().check_no_raw_secrets(arguments, ["secret_key"])
     resolved_sk = _resolve_flat_key(arguments, "secret_key", "kem")
     secret_key = resolved_sk if resolved_sk is not None else _b64(arguments["secret_key"])
     ciphertext = _b64(arguments["ciphertext"])
@@ -235,6 +245,7 @@ def handle_decapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_sign(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
+    get_policy().check_no_raw_secrets(arguments, ["secret_key"])
     resolved_sk = _resolve_flat_key(arguments, "secret_key", "signature")
     secret_key = resolved_sk if resolved_sk is not None else _b64(arguments["secret_key"])
     message = arguments["message"].encode("utf-8")
