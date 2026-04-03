@@ -2,27 +2,27 @@
 
 Generated 2026-04-02 via three-model adversarial review (Claude Opus 4.6, Codex GPT-5.4, Qwen 3.5).
 
-## Current State
+## Current State (post v0.7.0 / pqc-mcp-v3)
 
 | Area | Score (1-10) | Notes |
 |------|-------------|-------|
-| Cryptographic correctness | 8.3 | LAMPS combiner with KAT, FIPS 203/204, verify-before-decrypt |
-| Code quality & architecture | 8.3 | Clean 4-layer separation, key_store mixes concerns slightly |
-| Test coverage | 8.0 | 184+ tests, missing fuzz/KAT for sigs, plugin tests are file-presence only |
-| Documentation | 8.7 | Honest security disclaimers, thorough README, Keep a Changelog |
-| Security posture | 7.3 | Good for research; bounded freshness only, ephemeral key store, promptware |
-| Usability / DX | 7.7 | Clear skills, liboqs friction, hardcoded paths, restart loses handles |
-| Completeness vs goals | 8.3 | Full key lifecycle + envelopes, missing network transport |
-| **Overall** | **B+/A-** | |
+| Cryptographic correctness | 9.0 | v3 mode-bound envelopes, LP AAD, full validation, 5-model review |
+| Code quality & architecture | 9.0 | Clean layering, shared _core_encrypt, _verify_authenticated_envelope |
+| Test coverage | 9.0 | Unit + Wycheproof + Hypothesis + protocol fuzz + mode separation tests |
+| Documentation | 8.0 | Coherence session in progress — README/CHANGELOG being aligned |
+| Security posture | 8.5 | v3 mode separation, replay cache, handle-only policy, content safety |
+| Usability / DX | 8.0 | Handle-first examples, verify tool, parameterized config |
+| Completeness vs goals | 8.5 | Full authenticated envelope protocol, missing network transport |
+| **Overall** | **A-** | |
 
 ## Phase 1: Quick Wins (~6 hours)
 
 Priority: fix secret exposure and tool gaps before adding features.
 
-- [ ] **pyproject.toml version sync** — bump to 0.5.0 to match CHANGELOG (<15 min, Docs +0.3)
-- [ ] **`.mcp.json` relative paths** — parameterize with env var instead of hardcoded local path (1 hr, UX +0.3)
-- [ ] **`pqc_hybrid_auth_verify` tool** — dedicated verify-signature-without-decrypting tool, closing the verify-sender skill gap (2-3 hrs, Security +0.3, Completeness +0.3)
-- [ ] **Gate raw secret exposure** — raw `pqc_generate_keypair`, `pqc_encapsulate`, `pqc_sign` tools should redact secret keys from output unless explicitly opted in (2 hrs, Security +0.5)
+- [x] **pyproject.toml version sync** — bumped through 0.5.0 → 0.6.0 → 0.7.0
+- [x] **`.mcp.json` relative paths** — parameterized with PQC_MCP_PATH env var
+- [x] **`pqc_hybrid_auth_verify` tool** — verify signature without decrypting, with replay_seen advisory
+- [x] **Gate raw secret exposure** — PQC_REQUIRE_KEY_HANDLES now enforced across all handlers
 
 ## Phase 2: Medium Effort (~5-7 days)
 

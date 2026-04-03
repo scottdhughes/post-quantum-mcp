@@ -1,6 +1,8 @@
-# Security Audit Report
+# Multi-Model Adversarial Security Review
 
-**Audit Date:** April 1, 2026
+> **Internal hardening review — not an external third-party audit.**
+
+**Review Period:** April 1–3, 2026
 
 ## Executive Summary
 This audit reviewed the `post-quantum-mcp` repository as a research/prototyping MCP server for post-quantum cryptography, with emphasis on hybrid X25519 + ML-KEM-768 envelopes, ML-DSA-65 sender authentication, replay handling, secret-key exposure controls, and supporting tests. Scope included `CHANGELOG.md`, `ROADMAP.md`, the `pqc_mcp_server` package, and the test corpus. Overall, the codebase shows solid research-grade security engineering and clear hardening progress, but it is not production-ready because accepted architectural risks remain around transport, forward secrecy, and legacy compatibility.
