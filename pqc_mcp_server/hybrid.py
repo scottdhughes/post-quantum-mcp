@@ -246,12 +246,13 @@ def _build_auth_transcript(
     pqc_ciphertext: bytes,
     aead_ciphertext: bytes,
     timestamp: bytes = b"",
+    mode: bytes = b"",
 ) -> bytes:
     """Build canonical binary transcript for authenticated envelope signature.
 
     Fixed domain prefix + length-prefixed fields. Deterministic and unambiguous.
-    Timestamp is included when present to bind freshness to the signature,
-    preventing an attacker from stripping/modifying it without invalidation.
+    v3: mode is explicitly bound into the signed transcript, ensuring the
+    signature covers the mode label (defense-in-depth alongside AEAD separation).
     v3 uses _AUTH_TRANSCRIPT_PREFIX_V3; v1/v2 use _AUTH_TRANSCRIPT_PREFIX_V2.
     """
     ver_str = version.decode() if isinstance(version, bytes) else version
@@ -272,6 +273,8 @@ def _build_auth_transcript(
     )
     if timestamp:
         transcript += _len_prefix(timestamp)
+    if mode:
+        transcript += _len_prefix(mode)
     return transcript
 
 
@@ -435,10 +438,23 @@ def hybrid_open(
     envelope: dict[str, Any],
     classical_sk: bytes,
     pqc_sk: bytes,
+    _internal: bool = False,
 ) -> dict[str, Any]:
     """Decrypt a sealed envelope."""
     # Validate envelope size before any processing
     _validate_envelope_size(envelope)
+    if not _internal:
+        _validate_v3_schema(envelope)
+        # Public API: reject auth-seal envelopes (must use hybrid_auth_open)
+        env_mode = envelope.get("mode", "")
+        if (
+            envelope.get("version") == ENVELOPE_VERSION
+            and env_mode == _MODE_AUTH_SEAL
+        ):
+            raise ValueError(
+                "auth-seal envelopes must be opened with hybrid_auth_open, "
+                "not hybrid_open"
+            )
 
     # Validate transmitted header fields before any crypto
     if envelope.get("version") not in _ACCEPTED_VERSIONS:
@@ -555,6 +571,7 @@ def hybrid_auth_seal(
         pqc_ciphertext=pqc_ct_bytes,
         aead_ciphertext=aead_ct_bytes,
         timestamp=timestamp.encode(),
+        mode=_MODE_AUTH_SEAL.encode(),
     )
 
     # Sign transcript with ML-DSA
@@ -591,6 +608,18 @@ _SIZE_LIMITED_FIELDS = (
 )
 
 
+_V3_ANON_REQUIRED = {
+    "version", "mode", "suite",
+    "x25519_ephemeral_public_key", "pqc_ciphertext", "ciphertext",
+}
+_V3_AUTH_REQUIRED = _V3_ANON_REQUIRED | {
+    "sender_signature_algorithm", "sender_public_key",
+    "sender_key_fingerprint", "recipient_classical_key_fingerprint",
+    "recipient_pqc_key_fingerprint", "timestamp", "signature",
+}
+_V3_AUTH_ONLY_FIELDS = _V3_AUTH_REQUIRED - _V3_ANON_REQUIRED
+
+
 def _validate_envelope_size(envelope: dict[str, Any]) -> None:
     """Reject oversized or pathological envelopes before any crypto processing.
 
@@ -607,6 +636,36 @@ def _validate_envelope_size(envelope: dict[str, Any]) -> None:
             raise ValueError(
                 f"Envelope field '{field}' is {len(val)} chars (max {_MAX_B64_FIELD_SIZE})"
             )
+
+
+def _validate_v3_schema(envelope: dict[str, Any]) -> None:
+    """Strict schema validation for v3 envelopes by mode.
+
+    anon-seal: must not contain auth-only fields (signature, sender, timestamp)
+    auth-seal: must contain all auth fields
+    """
+    if envelope.get("version") not in (ENVELOPE_VERSION,):
+        return  # only enforce strict schema for v3
+
+    mode = envelope.get("mode", "")
+    if mode == _MODE_ANON_SEAL:
+        # Reject auth-only fields in anon envelopes
+        unexpected = _V3_AUTH_ONLY_FIELDS & envelope.keys()
+        if unexpected:
+            raise ValueError(
+                f"anon-seal envelope contains auth-only fields: "
+                f"{', '.join(sorted(unexpected))}"
+            )
+    elif mode == _MODE_AUTH_SEAL:
+        # Require all auth fields
+        missing = _V3_AUTH_REQUIRED - envelope.keys()
+        if missing:
+            raise ValueError(
+                f"auth-seal envelope missing required fields: "
+                f"{', '.join(sorted(missing))}"
+            )
+    else:
+        raise ValueError(f"Unknown v3 mode: '{mode}'")
 
 
 def _verify_authenticated_envelope(
@@ -626,6 +685,9 @@ def _verify_authenticated_envelope(
     """
     # Validate envelope size before any processing (prevents resource exhaustion)
     _validate_envelope_size(envelope)
+    # Note: v3 schema validation is NOT applied here — we want signature
+    # verification to catch mode tampering, not a pre-check. Schema
+    # validation runs at the handler/public API level instead.
 
     # Require exactly one sender binding
     if expected_sender_public_key is None and expected_sender_fingerprint is None:
@@ -720,7 +782,9 @@ def _verify_authenticated_envelope(
     # Mitigation: deprecate v1 acceptance in a future version.
     timestamp_bytes = str(envelope_timestamp).encode() if envelope_timestamp else b""
 
-    # Reconstruct canonical transcript (timestamp included when present)
+    # Reconstruct canonical transcript (mode + timestamp for v3)
+    env_mode = envelope.get("mode", "")
+    mode_bytes = env_mode.encode() if env_mode else b""
     transcript = _build_auth_transcript(
         version=envelope["version"].encode(),
         suite=envelope["suite"].encode(),
@@ -733,6 +797,7 @@ def _verify_authenticated_envelope(
         pqc_ciphertext=pqc_ct_bytes,
         aead_ciphertext=aead_ct_bytes,
         timestamp=timestamp_bytes,
+        mode=mode_bytes,
     )
 
     # Verify signature
@@ -810,7 +875,7 @@ def hybrid_auth_open(
         "pqc_ciphertext": envelope["pqc_ciphertext"],
         "ciphertext": envelope["ciphertext"],
     }
-    result = hybrid_open(inner_envelope, classical_sk, pqc_sk)
+    result = hybrid_open(inner_envelope, classical_sk, pqc_sk, _internal=True)
 
     result["sender_key_fingerprint"] = verified["sender_key_fingerprint"]
     result["sender_signature_algorithm"] = verified["sender_signature_algorithm"]
