@@ -164,3 +164,54 @@ class TestModeBoundTranscript:
         env["mode"] = _MODE_ANON_SEAL  # tamper mode
         with pytest.raises(SenderVerificationError):
             hybrid_auth_verify(env, expected_sender_fingerprint=keys["sig_fp"])
+
+
+class TestSignatureDigest:
+    """signature_digest rejects missing/empty/invalid signatures."""
+
+    def test_rejects_missing(self):
+        from pqc_mcp_server.replay_cache import signature_digest
+
+        with pytest.raises(ValueError, match="no signature"):
+            signature_digest({})
+
+    def test_rejects_empty(self):
+        from pqc_mcp_server.replay_cache import signature_digest
+
+        with pytest.raises(ValueError, match="no signature"):
+            signature_digest({"signature": ""})
+
+    def test_rejects_invalid_base64(self):
+        from pqc_mcp_server.replay_cache import signature_digest
+
+        with pytest.raises(Exception):
+            signature_digest({"signature": "!!!"})
+
+
+class TestFallbackCache:
+    """Fallback in-memory cache (created via __new__) works correctly."""
+
+    def test_prunes_without_error(self):
+        from pqc_mcp_server.replay_cache import (
+            ReplayCache,
+            _DEFAULT_MAX_SIZE,
+            _DEFAULT_TTL,
+        )
+
+        cache = ReplayCache.__new__(ReplayCache)
+        cache.cache_file = ""
+        cache.ttl_seconds = _DEFAULT_TTL
+        cache.max_size = _DEFAULT_MAX_SIZE
+        cache._cache = {}
+
+        # Should not raise AttributeError
+        cache.prune()
+        cache.check("test-digest")
+        cache.check_and_mark("test-digest")
+        assert cache.check("test-digest")
+
+        # Fill past max and prune expired
+        for i in range(100):
+            cache._cache[f"d-{i}"] = 0  # expired (timestamp 0)
+        cache.prune()
+        assert len(cache._cache) <= 1  # only the non-expired one
