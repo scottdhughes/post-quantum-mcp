@@ -173,6 +173,14 @@ def handle_hybrid_open(arguments: dict[str, Any]) -> dict[str, Any]:
             f"({', '.join(sorted(auth_fields))}). "
             "Use pqc_hybrid_auth_open to verify the sender before decrypting."
         )
+    # v3: reject auth-seal mode at the handler level (use hybrid_auth_open)
+    from pqc_mcp_server.hybrid import ENVELOPE_VERSION, _MODE_AUTH_SEAL
+    env_mode = envelope.get("mode", "")
+    if envelope.get("version") == ENVELOPE_VERSION and env_mode == _MODE_AUTH_SEAL:
+        raise ValueError(
+            "This is an auth-seal envelope. "
+            "Use pqc_hybrid_auth_open to verify the sender before decrypting."
+        )
     classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
     return hybrid_open(envelope, classical_sk, pqc_sk)
 

@@ -371,15 +371,17 @@ def hybrid_decap(
     }
 
 
-def hybrid_seal(
+def _core_encrypt(
     plaintext_bytes: bytes,
     recipient_classical_pk: bytes,
     recipient_pqc_pk: bytes,
+    mode: str,
 ) -> dict[str, Any]:
-    """Encrypt plaintext using hybrid encapsulation + AES-256-GCM.
+    """Core hybrid encryption. Mode is bound into HKDF and AAD.
 
-    Anonymous sealed-box: anyone with recipient public keys can seal.
-    Single-shot: one encapsulation, one AEAD encryption.
+    Both hybrid_seal (anon-seal) and hybrid_auth_seal (auth-seal) use this
+    core, ensuring the AEAD ciphertext is cryptographically bound to the mode.
+    An auth-seal ciphertext cannot be opened as anon-seal and vice versa.
     """
     _validate_x25519_key(recipient_classical_pk, "recipient_classical_public_key")
     _validate_mlkem768_pk(recipient_pqc_pk, "recipient_pqc_public_key")
@@ -402,22 +404,31 @@ def hybrid_seal(
 
     # Derive AEAD key + nonce (v3: mode-bound, epk domain separation)
     aes_key, nonce = _derive_aead_key_and_nonce(
-        combined_ss, eph_pk_bytes, mode=_MODE_ANON_SEAL
+        combined_ss, eph_pk_bytes, mode=mode
     )
 
     # Encrypt with AAD (v3: length-prefixed, mode-bound)
-    aad = _build_aad(eph_pk_bytes, pqc_ct, mode=_MODE_ANON_SEAL)
+    aad = _build_aad(eph_pk_bytes, pqc_ct, mode=mode)
     aesgcm = AESGCM(aes_key)
     ciphertext = aesgcm.encrypt(nonce, plaintext_bytes, aad)
 
     return {
         "version": ENVELOPE_VERSION,
-        "mode": _MODE_ANON_SEAL,
+        "mode": mode,
         "suite": SUITE,
         "x25519_ephemeral_public_key": base64.b64encode(eph_pk_bytes).decode(),
         "pqc_ciphertext": base64.b64encode(pqc_ct).decode(),
         "ciphertext": base64.b64encode(ciphertext).decode(),
     }
+
+
+def hybrid_seal(
+    plaintext_bytes: bytes,
+    recipient_classical_pk: bytes,
+    recipient_pqc_pk: bytes,
+) -> dict[str, Any]:
+    """Encrypt plaintext as anonymous sealed-box (mode=anon-seal)."""
+    return _core_encrypt(plaintext_bytes, recipient_classical_pk, recipient_pqc_pk, _MODE_ANON_SEAL)
 
 
 def hybrid_open(
@@ -463,13 +474,13 @@ def hybrid_open(
     env_version = envelope["version"]
     env_mode = envelope.get("mode", "")
 
-    # v3: enforce mode = anon-seal for anonymous open
-    if env_version == ENVELOPE_VERSION:
-        if env_mode != _MODE_ANON_SEAL:
-            raise ValueError(
-                f"hybrid_open requires mode='{_MODE_ANON_SEAL}' for v3 envelopes, "
-                f"got '{env_mode}'. Use hybrid_auth_open for authenticated envelopes."
-            )
+    # v3 public API: enforce mode = anon-seal. Auth envelopes must go
+    # through hybrid_auth_open which calls _core_decrypt with auth-seal.
+    if env_version == ENVELOPE_VERSION and env_mode not in (_MODE_ANON_SEAL, _MODE_AUTH_SEAL):
+        raise ValueError(
+            f"Unknown mode '{env_mode}' for v3 envelope. "
+            f"Expected '{_MODE_ANON_SEAL}' or '{_MODE_AUTH_SEAL}'."
+        )
 
     combined_ss = _kem_combine(ss_mlkem, ss_x25519, epk_bytes, pk_x25519)
     aes_key, nonce = _derive_aead_key_and_nonce(
@@ -512,8 +523,12 @@ def hybrid_auth_seal(
     # silently accepts wrong-size keys, producing garbage signatures)
     _validate_mldsa65_key(sender_sig_sk, sender_sig_pk)
 
-    # Seal (anonymous confidentiality layer — reuse existing core)
-    envelope = hybrid_seal(plaintext_bytes, recipient_classical_pk, recipient_pqc_pk)
+    # Seal with auth-seal mode — ciphertext is cryptographically bound to auth mode.
+    # This prevents auth-stripping: an attacker cannot strip the signature and
+    # open the ciphertext as anon-seal because the HKDF/AAD use different mode labels.
+    envelope = _core_encrypt(
+        plaintext_bytes, recipient_classical_pk, recipient_pqc_pk, _MODE_AUTH_SEAL
+    )
 
     # Timestamp for replay protection (signed as part of transcript)
     timestamp = str(int(time.time()))
@@ -785,11 +800,11 @@ def hybrid_auth_open(
                 f"got '{env_mode}'"
             )
 
-    # Signature valid — now decrypt via the existing anonymous open path.
-    # Inner encryption always uses anon-seal derivation (auth wraps anon).
+    # Signature valid — now decrypt. Auth envelopes use auth-seal mode for
+    # AEAD derivation, preventing auth-stripping downgrade attacks.
     inner_envelope = {
         "version": envelope["version"],
-        "mode": _MODE_ANON_SEAL,  # inner AEAD always uses anon-seal
+        "mode": envelope.get("mode", ""),  # preserve original mode for AEAD
         "suite": envelope["suite"],
         "x25519_ephemeral_public_key": envelope["x25519_ephemeral_public_key"],
         "pqc_ciphertext": envelope["pqc_ciphertext"],
