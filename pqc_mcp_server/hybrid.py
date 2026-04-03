@@ -54,13 +54,42 @@ _ACCEPTED_VERSIONS = {ENVELOPE_VERSION, _ENVELOPE_VERSION_V1}
 
 _MLKEM768_PK_SIZE = 1184
 _MLKEM768_SK_SIZE = 2400
+_MLKEM768_CT_SIZE = 1088
 _MLDSA65_PK_SIZE = 1952
 _MLDSA65_SK_SIZE = 4032
+_GCM_TAG_SIZE = 16
 
 
 def _validate_x25519_key(key_bytes: bytes, label: str) -> None:
     if len(key_bytes) != 32:
         raise ValueError(f"{label} must be exactly 32 bytes, got {len(key_bytes)}")
+
+
+def _validate_mlkem768_ct(ct_bytes: bytes, label: str = "pqc_ciphertext") -> None:
+    """Validate ML-KEM-768 ciphertext size before decapsulation."""
+    if len(ct_bytes) != _MLKEM768_CT_SIZE:
+        raise ValueError(
+            f"{label} must be exactly {_MLKEM768_CT_SIZE} bytes for ML-KEM-768, "
+            f"got {len(ct_bytes)}"
+        )
+
+
+def _validate_mlkem768_sk(sk_bytes: bytes, label: str = "pqc_secret_key") -> None:
+    """Validate ML-KEM-768 secret key size before decapsulation."""
+    if len(sk_bytes) != _MLKEM768_SK_SIZE:
+        raise ValueError(
+            f"{label} must be exactly {_MLKEM768_SK_SIZE} bytes for ML-KEM-768, "
+            f"got {len(sk_bytes)}"
+        )
+
+
+def _validate_gcm_ciphertext(ct_bytes: bytes, label: str = "ciphertext") -> None:
+    """Validate GCM ciphertext has at least a tag (16 bytes)."""
+    if len(ct_bytes) < _GCM_TAG_SIZE:
+        raise ValueError(
+            f"{label} must be at least {_GCM_TAG_SIZE} bytes (GCM tag), "
+            f"got {len(ct_bytes)}"
+        )
 
 
 def _validate_mldsa65_key(sk: bytes, pk: bytes) -> None:
@@ -248,6 +277,8 @@ def hybrid_encap(classical_pk: bytes, pqc_pk: bytes) -> dict[str, Any]:
     # ML-KEM-768: encapsulate
     kem = oqs.KeyEncapsulation("ML-KEM-768")
     pqc_ct, ss_mlkem = kem.encap_secret(pqc_pk)
+    if len(pqc_ct) != _MLKEM768_CT_SIZE:
+        raise RuntimeError(f"Unexpected ML-KEM-768 ciphertext length: {len(pqc_ct)}")
 
     # Combine via SHA3-256
     combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, classical_pk)
@@ -270,6 +301,8 @@ def hybrid_decap(
     """Recover the combined shared secret."""
     _validate_x25519_key(classical_sk, "classical_secret_key")
     _validate_x25519_key(x25519_epk, "x25519_ephemeral_public_key")
+    _validate_mlkem768_ct(pqc_ct, "pqc_ciphertext")
+    _validate_mlkem768_sk(pqc_sk, "pqc_secret_key")
 
     # X25519: ECDH with ephemeral public key
     sk = X25519PrivateKey.from_private_bytes(classical_sk)
@@ -318,6 +351,8 @@ def hybrid_seal(
 
     kem = oqs.KeyEncapsulation("ML-KEM-768")
     pqc_ct, ss_mlkem = kem.encap_secret(recipient_pqc_pk)
+    if len(pqc_ct) != _MLKEM768_CT_SIZE:
+        raise RuntimeError(f"Unexpected ML-KEM-768 ciphertext length: {len(pqc_ct)}")
 
     combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, recipient_classical_pk)
 
@@ -360,6 +395,9 @@ def hybrid_open(
     ciphertext = base64.b64decode(envelope["ciphertext"], validate=True)
 
     _validate_x25519_key(epk_bytes, "x25519_ephemeral_public_key")
+    _validate_mlkem768_ct(pqc_ct, "pqc_ciphertext")
+    _validate_mlkem768_sk(pqc_sk, "pqc_secret_key")
+    _validate_gcm_ciphertext(ciphertext)
 
     # X25519 ECDH
     sk = X25519PrivateKey.from_private_bytes(classical_sk)
