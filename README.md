@@ -5,7 +5,7 @@
 [![liboqs](https://img.shields.io/badge/liboqs-0.15.0-green.svg)](https://openquantumsafe.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.6+-purple.svg)](https://modelcontextprotocol.io/)
 
-> **Research and Prototyping Only.** This server uses [liboqs](https://github.com/open-quantum-safe/liboqs), which is explicitly not recommended for production use or for protecting sensitive data. When using `store_as` mode (recommended), secret keys are redacted from tool output and held in a session-scoped keyring. Without `store_as`, secret keys and shared secrets appear in tool output, which may enter model context, client logs, or transcripts. Set `PQC_REQUIRE_KEY_HANDLES=1` to enforce handle-only mode for hybrid envelope operations (note: raw PQC tools like `pqc_sign`/`pqc_decapsulate` are not yet covered). Suitable for experimentation, education, and interoperability testing.
+> **Research and Prototyping Only.** This server uses [liboqs](https://github.com/open-quantum-safe/liboqs), which is explicitly not recommended for production use or for protecting sensitive data. When using `store_as` mode (recommended), secret keys are redacted from tool output and held in a session-scoped keyring. Without `store_as`, secret keys and shared secrets appear in tool output, which may enter model context, client logs, or transcripts. Set `PQC_REQUIRE_KEY_HANDLES=1` to enforce handle-only mode for all secret-key operations. Suitable for experimentation, education, and interoperability testing.
 
 A **Model Context Protocol (MCP) server** that provides post-quantum cryptographic operations using [Open Quantum Safe's liboqs](https://openquantumsafe.org/). Enables AI assistants like Claude to perform quantum-resistant cryptographic operations including key generation, encryption, signing, and verification.
 
@@ -177,7 +177,7 @@ Output: NIST level, classical/quantum security equivalents, Grover/Shor resistan
 
 ## Hybrid Key Exchange (X25519 + ML-KEM-768)
 
-Suite: `mlkem768-x25519-sha3-256` — borrows the KEM combiner from the LAMPS composite ML-KEM draft (`id-MLKEM768-X25519-SHA3-256`). The sealed-envelope layer is this project's own protocol built on top of that combiner.
+Suite: `mlkem768-x25519-sha3-256` — borrows the KEM combiner from the LAMPS composite ML-KEM draft (`id-MLKEM768-X25519-SHA3-256`). The `sha3-256` in the suite name refers to the KEM combiner hash; HKDF key derivation uses SHA-256 (via `cryptography` HKDF). The sealed-envelope layer is this project's own protocol built on top of that combiner.
 
 This is an **anonymous sealed-box** construction providing hybrid confidentiality with ciphertext integrity. It is not forward-secret against recipient key compromise, and it is not sender-authenticated.
 
@@ -236,7 +236,8 @@ Encrypt/decrypt plaintext using hybrid encapsulation + AES-256-GCM. Full-header 
 // Seal output
 {
   "envelope": {
-    "version": "pqc-mcp-v2",
+    "version": "pqc-mcp-v3",
+    "mode": "anon-seal",
     "suite": "mlkem768-x25519-sha3-256",
     "x25519_ephemeral_public_key": "6+b1Y8AkgEycKL5wL2cIeSMv...",
     "pqc_ciphertext": "DF+PYy4zx+OmnW8wLD3EL+4M...",
@@ -288,7 +289,8 @@ Encrypt + sign. Requires sender ML-DSA-65 signing keys + recipient hybrid keys.
 // Output
 {
   "envelope": {
-    "version": "pqc-mcp-v2",
+    "version": "pqc-mcp-v3",
+    "mode": "auth-seal",
     "suite": "mlkem768-x25519-sha3-256",
     
     "sender_signature_algorithm": "ML-DSA-65",
@@ -362,7 +364,8 @@ Verify sender signature on an authenticated envelope WITHOUT decrypting. No secr
   "verified": true,
   "sender_key_fingerprint": "0f617ece2f1d04c0...",
   "sender_signature_algorithm": "ML-DSA-65",
-  "version": "pqc-mcp-v2",
+  "version": "pqc-mcp-v3",
+  "mode": "auth-seal",
   "replay_seen": false,
   "timestamp": "1711929600"
 }
@@ -377,7 +380,8 @@ Inspect envelope metadata without decrypting. No secret keys needed. Returns ver
 
 // Output
 {
-  "version": "pqc-mcp-v2",
+  "version": "pqc-mcp-v3",
+  "mode": "auth-seal",
   "suite": "mlkem768-x25519-sha3-256",
   "authenticated": true,
   "sender_key_fingerprint": "0f617ece2f1d04c0...",
@@ -475,8 +479,8 @@ Providing both a store name and raw keys for the same role is an error.
 
 ## Security Features
 
-### v2 Envelope Protocol
-Authenticated envelopes now include a signed `timestamp` field in the canonical transcript. On verification/open, the server checks freshness (default: 24 hours, configurable via `max_age_seconds`). Clock skew tolerance is 5 minutes. Anonymous (non-authenticated) envelopes are unaffected.
+### v3 Envelope Protocol
+v3 envelopes are mode-bound: every envelope carries an explicit `mode` field (`anon-seal` or `auth-seal`) that is bound into HKDF info, AAD, and the auth transcript. This provides true cross-mode separation — ciphertext produced by one mode cannot be decrypted by the other, blocking auth-stripping downgrade attacks at the AEAD layer. AAD uses length-prefixed framing (self-delimiting) in v3. Authenticated envelopes include a signed `timestamp` field in the canonical transcript; on verification/open, the server checks freshness (default: 24 hours, configurable via `max_age_seconds`). Clock skew tolerance is 5 minutes.
 
 ### Replay Protection
 The server maintains a signature-digest cache (SHA3-256 of envelope signature bytes) with TTL. `pqc_hybrid_auth_verify` performs a read-only replay check. `pqc_hybrid_auth_open` performs check-before-decrypt and mark-after-success. The cache persists to `~/.pqc/state/replay-cache.json` and survives server restarts. Max 50,000 entries with oldest-first eviction.
@@ -485,10 +489,10 @@ The server maintains a signature-digest cache (SHA3-256 of envelope signature by
 All envelopes are validated before any cryptographic processing: max 1MB per base64 field (`ciphertext`, `pqc_ciphertext`, `signature`, `sender_public_key`, `x25519_ephemeral_public_key`), max 50 fields total. Prevents memory bombs and resource exhaustion.
 
 ### Server Security Policy
-Set `PQC_REQUIRE_KEY_HANDLES=1` to enforce handle-only mode: the server rejects any tool call that passes raw secret keys, forcing use of `store_as`/`key_store_name` for all secret-key operations. This is a server-side check that cannot be bypassed by a misbehaving agent.
+Set `PQC_REQUIRE_KEY_HANDLES=1` to enforce handle-only mode: the server rejects any tool call that passes raw secret keys, forcing use of `store_as`/`key_store_name` for all secret-key operations (keygen, sign, decapsulate, and hybrid envelope operations). This is a server-side check that cannot be bypassed by a misbehaving agent.
 
-### v1 Backwards Compatibility
-v1 envelopes (`pqc-mcp-v1`) are accepted on open/verify for backwards compatibility but produce a loud warning. v1 envelopes lack signed timestamps and therefore skip freshness checks and provide no replay protection.
+### v1/v2 Backwards Compatibility
+v1 envelopes (`pqc-mcp-v1`) are accepted on open/verify for backwards compatibility but produce a loud warning. v1 envelopes lack signed timestamps and therefore skip freshness checks and provide no replay protection. v2 envelopes (`pqc-mcp-v2`) are accepted but lack mode-binding; a deprecation warning is included in the response.
 
 ## Supported Algorithms
 
@@ -586,7 +590,7 @@ This table shows the exact versions CI-tested on every push. Other combinations 
 | Component | CI-Tested Version | Floor (pyproject.toml) | Notes |
 |-----------|------------------|----------------------|-------|
 | **liboqs** (C library) | 0.15.0 | — (built from source) | CI builds from source on Ubuntu and macOS |
-| **liboqs-python** | 0.14.1 | `>=0.10.0` | Version skew with liboqs 0.15.0 produces a warning; all 110 tests pass |
+| **liboqs-python** | 0.14.1 | `>=0.10.0` | Version skew with liboqs 0.15.0 produces a warning; comprehensive unit, fuzz, Wycheproof, and Hypothesis test coverage all passes |
 | **cryptography** | 46.0.6 | `>=42.0.0` | X25519, HKDFExpand, AESGCM |
 | **mcp** | 1.26.0 | `>=1.6.0,<2.0.0` | MCP Server + stdio transport |
 | **Python** | 3.10, 3.11, 3.12, 3.13 | `>=3.10` | Full matrix on Ubuntu + macOS |

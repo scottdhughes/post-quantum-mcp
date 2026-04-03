@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-04-03
+
+### Changed
+- **BREAKING:** Envelope version bumped from pqc-mcp-v2 to pqc-mcp-v3
+- Mode field required in all v3 envelopes (anon-seal or auth-seal)
+- Mode bound into HKDF info, AAD, and auth transcript (true cross-mode separation)
+- AAD switched to length-prefixed framing for v3 (self-delimiting)
+- Auth transcript prefix updated to pqc-mcp-auth-v3
+- PQC_REQUIRE_KEY_HANDLES now enforces across ALL handlers (keygen, sign, decapsulate), not just hybrid envelope operations
+
+### Added
+- _core_encrypt() with mode parameter — both hybrid_seal and hybrid_auth_seal derive AEAD keys with their respective mode, preventing auth-stripping downgrade
+- ML-KEM-768 ciphertext size validation (1088 bytes) before decapsulation
+- ML-KEM-768 secret key size validation (2400 bytes) before decapsulation
+- GCM ciphertext minimum length check (16 bytes for tag)
+- Strict v3 schema validation: anon-seal rejects auth fields, auth-seal requires all
+- Replay cache TTL alignment: max_age_seconds cannot exceed cache TTL
+- v3 envelope spec document (docs/v3-envelope-spec.md)
+- 13 cross-mode confusion tests (test_v3_mode_separation.py)
+
+### Fixed
+- Auth-stripping downgrade: auth-seal ciphertext now uses different AEAD derivation than anon-seal (ChatGPT finding — most architecturally significant fix)
+- Stale is_v2 variable in timestamp enforcement: replaced with requires_timestamp checking v1 exclusion
+- Missing max_size in replay cache fallback path (AttributeError on eviction)
+- signature_digest now rejects missing/empty signatures
+- Concurrency window in replay check/mark explicitly documented as single-process tradeoff
+
+### Security
+- Five-model adversarial review: Claude, Codex, Qwen, ChatGPT (two passes)
+- Auth-stripping downgrade blocked at AEAD layer (InvalidTag), not parser
+- Mode separation enforced at 5 layers: HKDF, AAD, transcript, schema, handler
+
 ## [0.6.0] - 2026-04-02
 
 ### Changed
@@ -135,6 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Base64-encoded key/signature transport
 - SHA3 and SHAKE hash functions
 
+[0.7.0]: https://github.com/scottdhughes/post-quantum-mcp/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/scottdhughes/post-quantum-mcp/compare/v0.4.0...v0.6.0
 [0.4.0]: https://github.com/scottdhughes/post-quantum-mcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/scottdhughes/post-quantum-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/scottdhughes/post-quantum-mcp/compare/v0.1.0...v0.2.0
