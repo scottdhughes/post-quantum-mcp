@@ -16,7 +16,7 @@ from pqc_mcp_server.hybrid import (
     SUITE,
     ENVELOPE_VERSION,
     DEFAULT_SIG_ALGORITHM,
-    _AUTH_TRANSCRIPT_PREFIX,
+    _AUTH_TRANSCRIPT_PREFIX_V2,
     SenderVerificationError,
     _fingerprint_public_key,
     _len_prefix,
@@ -72,7 +72,7 @@ class TestTranscript:
         transcript = _build_auth_transcript(
             b"v", b"s", b"a", b"pk", b"fp", b"cfp", b"pfp", b"epk", b"pct", b"act"
         )
-        assert transcript.startswith(_AUTH_TRANSCRIPT_PREFIX)
+        assert transcript.startswith(_AUTH_TRANSCRIPT_PREFIX_V2)
 
     def test_transcript_is_deterministic(self):
         args = (b"v", b"s", b"a", b"pk", b"fp", b"cfp", b"pfp", b"epk", b"pct", b"act")

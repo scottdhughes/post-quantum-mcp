@@ -43,13 +43,19 @@ import oqs
 
 SUITE = "mlkem768-x25519-sha3-256"
 COMBINER_LABEL = b"\x5c\x2e\x2f\x2f\x5e\x5c"  # \.//^\ — LAMPS id-MLKEM768-X25519-SHA3-256
-ENVELOPE_VERSION = "pqc-mcp-v2"
-_ENVELOPE_VERSION_V1 = "pqc-mcp-v1"  # accepted on open for backwards compat
+ENVELOPE_VERSION = "pqc-mcp-v3"
+_ENVELOPE_VERSION_V2 = "pqc-mcp-v2"
+_ENVELOPE_VERSION_V1 = "pqc-mcp-v1"
+_MODE_ANON_SEAL = "anon-seal"
+_MODE_AUTH_SEAL = "auth-seal"
+_HKDF_INFO_PREFIX_V3 = b"pqc-mcp-v3|mlkem768-x25519-sha3-256|"
 _HKDF_INFO_PREFIX_V2 = b"pqc-mcp-v2|mlkem768-x25519-sha3-256|"
 _HKDF_INFO_PREFIX_V1 = b"pqc-mcp-v1|mlkem768-x25519-sha3-256|"
 DEFAULT_SIG_ALGORITHM = "ML-DSA-65"
-_AUTH_TRANSCRIPT_PREFIX = b"pqc-mcp-auth-v2\x00"  # 16 bytes, null-terminated
-_ACCEPTED_VERSIONS = {ENVELOPE_VERSION, _ENVELOPE_VERSION_V1}
+_AUTH_TRANSCRIPT_PREFIX_V3 = b"pqc-mcp-auth-v3\x00"
+_AUTH_TRANSCRIPT_PREFIX_V2 = b"pqc-mcp-auth-v2\x00"
+_ACCEPTED_VERSIONS = {ENVELOPE_VERSION, _ENVELOPE_VERSION_V2, _ENVELOPE_VERSION_V1}
+_LEGACY_VERSIONS = {_ENVELOPE_VERSION_V2, _ENVELOPE_VERSION_V1}
 
 
 _MLKEM768_PK_SIZE = 1184
@@ -141,23 +147,33 @@ def _kem_combine(
 
 
 def _derive_aead_key_and_nonce(
-    combined_ss: bytes, epk_bytes: bytes = b"", version: str = ""
+    combined_ss: bytes,
+    epk_bytes: bytes = b"",
+    version: str = "",
+    mode: str = "",
 ) -> tuple[bytes, bytes]:
     """HKDF Extract+Expand to derive AES-256-GCM key and deterministic nonce.
 
-    v2: epk_bytes is included in the HKDF info for domain separation — ensures
-    the derived key/nonce are explicitly bound to the ephemeral public key
-    even though combined_ss already incorporates it via the KEM combiner.
-    Defense-in-depth against RNG failure scenarios (NIST SP 800-56C).
-
-    v1: original derivation without epk domain separation (backwards compat).
+    v3: mode is bound into HKDF info for cross-mode separation. epk_bytes
+    is included for domain separation (defense-in-depth, NIST SP 800-56C).
+    v2: epk domain separation only (no mode binding).
+    v1: original derivation (no epk, no mode).
     """
     salt = b"\x00" * 32
     prk = hmac.new(key=salt, msg=combined_ss, digestmod=hashlib.sha256).digest()
 
-    is_v1 = version == _ENVELOPE_VERSION_V1
-    prefix = _HKDF_INFO_PREFIX_V1 if is_v1 else _HKDF_INFO_PREFIX_V2
-    epk_domain = b"" if is_v1 else (hashlib.sha256(epk_bytes).digest() if epk_bytes else b"")
+    ver = version or ENVELOPE_VERSION
+    if ver == _ENVELOPE_VERSION_V1:
+        prefix = _HKDF_INFO_PREFIX_V1
+        epk_domain = b""
+    elif ver == _ENVELOPE_VERSION_V2:
+        prefix = _HKDF_INFO_PREFIX_V2
+        epk_domain = hashlib.sha256(epk_bytes).digest() if epk_bytes else b""
+    else:
+        # v3+: mode-bound derivation
+        mode_label = (mode or _MODE_ANON_SEAL).encode()
+        prefix = _HKDF_INFO_PREFIX_V3 + mode_label + b"|"
+        epk_domain = hashlib.sha256(epk_bytes).digest() if epk_bytes else b""
 
     aes_key = HKDFExpand(
         algorithm=SHA256(),
@@ -174,10 +190,34 @@ def _derive_aead_key_and_nonce(
     return aes_key, nonce
 
 
-def _build_aad(epk_x25519: bytes, pqc_ciphertext: bytes, version: str = "") -> bytes:
-    """Canonical AAD: version|suite|epk|pqc_ct."""
-    ver = (version or ENVELOPE_VERSION).encode()
-    return ver + b"|" + SUITE.encode() + b"|" + epk_x25519 + pqc_ciphertext
+def _lp(data: bytes) -> bytes:
+    """4-byte big-endian length prefix + raw bytes."""
+    return len(data).to_bytes(4, "big") + data
+
+
+def _build_aad(
+    epk_x25519: bytes,
+    pqc_ciphertext: bytes,
+    version: str = "",
+    mode: str = "",
+) -> bytes:
+    """Canonical AAD binding version, suite, and ciphertext components.
+
+    v3: length-prefixed framing with mode binding (self-delimiting).
+    v1/v2: legacy concatenation (fragile but backwards-compatible).
+    """
+    ver = version or ENVELOPE_VERSION
+    if ver in _LEGACY_VERSIONS:
+        return ver.encode() + b"|" + SUITE.encode() + b"|" + epk_x25519 + pqc_ciphertext
+    # v3+: length-prefixed, mode-bound AAD
+    mode_label = mode or _MODE_ANON_SEAL
+    return (
+        _lp(ver.encode())
+        + _lp(SUITE.encode())
+        + _lp(mode_label.encode())
+        + _lp(epk_x25519)
+        + _lp(pqc_ciphertext)
+    )
 
 
 class SenderVerificationError(Exception):
@@ -212,9 +252,13 @@ def _build_auth_transcript(
     Fixed domain prefix + length-prefixed fields. Deterministic and unambiguous.
     Timestamp is included when present to bind freshness to the signature,
     preventing an attacker from stripping/modifying it without invalidation.
+    v3 uses _AUTH_TRANSCRIPT_PREFIX_V3; v1/v2 use _AUTH_TRANSCRIPT_PREFIX_V2.
     """
+    ver_str = version.decode() if isinstance(version, bytes) else version
+    is_v3 = ver_str == ENVELOPE_VERSION
+    prefix = _AUTH_TRANSCRIPT_PREFIX_V3 if is_v3 else _AUTH_TRANSCRIPT_PREFIX_V2
     transcript = (
-        _AUTH_TRANSCRIPT_PREFIX
+        prefix
         + _len_prefix(version)
         + _len_prefix(suite)
         + _len_prefix(sig_algorithm)
@@ -356,16 +400,19 @@ def hybrid_seal(
 
     combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, recipient_classical_pk)
 
-    # Derive AEAD key + nonce (epk bound via domain separation)
-    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss, eph_pk_bytes)
+    # Derive AEAD key + nonce (v3: mode-bound, epk domain separation)
+    aes_key, nonce = _derive_aead_key_and_nonce(
+        combined_ss, eph_pk_bytes, mode=_MODE_ANON_SEAL
+    )
 
-    # Encrypt with AAD
-    aad = _build_aad(eph_pk_bytes, pqc_ct)
+    # Encrypt with AAD (v3: length-prefixed, mode-bound)
+    aad = _build_aad(eph_pk_bytes, pqc_ct, mode=_MODE_ANON_SEAL)
     aesgcm = AESGCM(aes_key)
     ciphertext = aesgcm.encrypt(nonce, plaintext_bytes, aad)
 
     return {
         "version": ENVELOPE_VERSION,
+        "mode": _MODE_ANON_SEAL,
         "suite": SUITE,
         "x25519_ephemeral_public_key": base64.b64encode(eph_pk_bytes).decode(),
         "pqc_ciphertext": base64.b64encode(pqc_ct).decode(),
@@ -414,11 +461,23 @@ def hybrid_open(
 
     # Combine + derive AEAD key + nonce (version-aware for backwards compat)
     env_version = envelope["version"]
+    env_mode = envelope.get("mode", "")
+
+    # v3: enforce mode = anon-seal for anonymous open
+    if env_version == ENVELOPE_VERSION:
+        if env_mode != _MODE_ANON_SEAL:
+            raise ValueError(
+                f"hybrid_open requires mode='{_MODE_ANON_SEAL}' for v3 envelopes, "
+                f"got '{env_mode}'. Use hybrid_auth_open for authenticated envelopes."
+            )
+
     combined_ss = _kem_combine(ss_mlkem, ss_x25519, epk_bytes, pk_x25519)
-    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss, epk_bytes, version=env_version)
+    aes_key, nonce = _derive_aead_key_and_nonce(
+        combined_ss, epk_bytes, version=env_version, mode=env_mode
+    )
 
     # Decrypt with AAD verification
-    aad = _build_aad(epk_bytes, pqc_ct, version=env_version)
+    aad = _build_aad(epk_bytes, pqc_ct, version=env_version, mode=env_mode)
     aesgcm = AESGCM(aes_key)
     plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, aad)
 
@@ -489,6 +548,7 @@ def hybrid_auth_seal(
 
     return {
         "version": envelope["version"],
+        "mode": _MODE_AUTH_SEAL,
         "suite": envelope["suite"],
         "sender_signature_algorithm": sender_sig_algorithm,
         "sender_public_key": base64.b64encode(sender_sig_pk).decode(),
@@ -715,9 +775,21 @@ def hybrid_auth_open(
         max_age_seconds,
     )
 
-    # Signature valid — now decrypt via the existing anonymous open path
+    # v3: enforce mode = auth-seal
+    env_version = envelope.get("version", "")
+    if env_version == ENVELOPE_VERSION:
+        env_mode = envelope.get("mode", "")
+        if env_mode != _MODE_AUTH_SEAL:
+            raise ValueError(
+                f"hybrid_auth_open requires mode='{_MODE_AUTH_SEAL}' for v3 envelopes, "
+                f"got '{env_mode}'"
+            )
+
+    # Signature valid — now decrypt via the existing anonymous open path.
+    # Inner encryption always uses anon-seal derivation (auth wraps anon).
     inner_envelope = {
         "version": envelope["version"],
+        "mode": _MODE_ANON_SEAL,  # inner AEAD always uses anon-seal
         "suite": envelope["suite"],
         "x25519_ephemeral_public_key": envelope["x25519_ephemeral_public_key"],
         "pqc_ciphertext": envelope["pqc_ciphertext"],

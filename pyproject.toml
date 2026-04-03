@@ -1,6 +1,6 @@
 [project]
 name = "post-quantum-mcp"
-version = "0.6.0"
+version = "0.7.0"
 description = "MCP server for post-quantum cryptography with hybrid X25519+ML-KEM-768 key exchange and ML-DSA-65 authenticated envelopes. Research/prototyping tooling using liboqs."
 readme = "README.md"
 license = {text = "MIT"}

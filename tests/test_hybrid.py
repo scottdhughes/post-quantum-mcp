@@ -135,10 +135,25 @@ class TestHKDF:
 
 
 class TestAAD:
-    def test_aad_construction_v2(self):
+    def test_aad_construction_v3_length_prefixed(self):
+        """v3 AAD uses length-prefixed framing with mode binding."""
         epk = b"\xaa" * 32
         ct = b"\xbb" * 100
         aad = _build_aad(epk, ct)
+        # v3 AAD is length-prefixed, not raw concatenation
+        assert len(aad) > 0
+        # Should contain version, suite, mode, epk, ct — all length-prefixed
+        # First 4 bytes = length of version string
+        ver_len = int.from_bytes(aad[:4], "big")
+        assert aad[4 : 4 + ver_len] == b"pqc-mcp-v3"
+
+    def test_aad_construction_v2_legacy(self):
+        """v2 AAD uses legacy concatenation."""
+        from pqc_mcp_server.hybrid import _ENVELOPE_VERSION_V2
+
+        epk = b"\xaa" * 32
+        ct = b"\xbb" * 100
+        aad = _build_aad(epk, ct, version=_ENVELOPE_VERSION_V2)
         assert aad.startswith(b"pqc-mcp-v2|mlkem768-x25519-sha3-256|")
 
     def test_aad_construction_v1(self):
