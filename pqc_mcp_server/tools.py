@@ -411,6 +411,15 @@ PQC_TOOLS: list[Tool] = [
                     "type": "string",
                     "description": "Name of stored hybrid key bundle",
                 },
+                "max_age_seconds": {
+                    "type": "integer",
+                    "description": (
+                        "Max envelope age in seconds for freshness check"
+                        " (default 86400 = 24h, 0 = disabled)."
+                        " v2 envelopes have signed timestamps; v1 envelopes"
+                        " skip freshness regardless. Clock skew tolerance: 5 min."
+                    ),
+                },
             },
             "required": ["envelope"],
         },
@@ -441,6 +450,15 @@ PQC_TOOLS: list[Tool] = [
                 "expected_sender_fingerprint": {
                     "type": "string",
                     "description": ("SHA3-256 hex fingerprint of sender public key"),
+                },
+                "max_age_seconds": {
+                    "type": "integer",
+                    "description": (
+                        "Max envelope age in seconds for freshness check"
+                        " (default 86400 = 24h, 0 = disabled)."
+                        " v2 envelopes have signed timestamps; v1 envelopes"
+                        " skip freshness regardless. Clock skew tolerance: 5 min."
+                    ),
                 },
             },
             "required": ["envelope"],

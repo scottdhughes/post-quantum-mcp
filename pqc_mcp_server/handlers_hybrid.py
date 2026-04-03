@@ -188,9 +188,11 @@ def handle_hybrid_auth_seal(arguments: dict[str, Any]) -> dict[str, Any]:
 def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
     envelope = arguments["envelope"]
 
+    # Size validation BEFORE replay digest (prevents oversized b64 decode in digest)
+    from pqc_mcp_server.hybrid import _validate_envelope_size
+    _validate_envelope_size(envelope)
+
     # Replay dedup: check BEFORE verification, mark AFTER success.
-    # This prevents pre-image blocking (Codex finding R4): an attacker
-    # can't submit an unverified envelope to block the real one.
     cache = get_replay_cache()
     digest = signature_digest(envelope)
     if cache.check(digest):
@@ -203,13 +205,17 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     expected_fp = arguments.get("expected_sender_fingerprint")
-    result = hybrid_auth_open(
-        envelope,
-        classical_sk,
-        pqc_sk,
-        expected_sender_public_key=expected_pk,
-        expected_sender_fingerprint=expected_fp,
-    )
+    max_age = arguments.get("max_age_seconds")
+    kwargs: dict[str, Any] = {
+        "expected_sender_public_key": expected_pk,
+        "expected_sender_fingerprint": expected_fp,
+    }
+    if max_age is not None:
+        max_age_int = int(max_age)
+        if max_age_int < 0:
+            raise ValueError("max_age_seconds must be non-negative (0 = disabled)")
+        kwargs["max_age_seconds"] = max_age_int
+    result = hybrid_auth_open(envelope, classical_sk, pqc_sk, **kwargs)
 
     # Mark AFTER successful verify+decrypt — only verified envelopes enter cache
     cache.mark(digest)
@@ -219,6 +225,10 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
 def handle_hybrid_auth_verify(arguments: dict[str, Any]) -> dict[str, Any]:
     """Verify sender signature without decrypting. No secret keys needed."""
     envelope = arguments["envelope"]
+
+    # Size validation BEFORE replay digest
+    from pqc_mcp_server.hybrid import _validate_envelope_size
+    _validate_envelope_size(envelope)
 
     # Replay dedup: read-only check (does NOT mark — allows verify-then-open)
     cache = get_replay_cache()
@@ -231,11 +241,17 @@ def handle_hybrid_auth_verify(arguments: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     expected_fp = arguments.get("expected_sender_fingerprint")
-    result = hybrid_auth_verify(
-        envelope,
-        expected_sender_public_key=expected_pk,
-        expected_sender_fingerprint=expected_fp,
-    )
+    max_age = arguments.get("max_age_seconds")
+    kwargs: dict[str, Any] = {
+        "expected_sender_public_key": expected_pk,
+        "expected_sender_fingerprint": expected_fp,
+    }
+    if max_age is not None:
+        max_age_int = int(max_age)
+        if max_age_int < 0:
+            raise ValueError("max_age_seconds must be non-negative (0 = disabled)")
+        kwargs["max_age_seconds"] = max_age_int
+    result = hybrid_auth_verify(envelope, **kwargs)
     result["replay_seen"] = replay_seen
     return result
 

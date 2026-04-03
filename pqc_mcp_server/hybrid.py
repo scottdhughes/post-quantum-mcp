@@ -10,8 +10,9 @@ Two envelope modes:
 - Anonymous sealed-box (hybrid_seal/hybrid_open): anyone with recipient public
   keys can seal. No sender authentication.
 - Sender-authenticated sealed-envelope (hybrid_auth_seal/hybrid_auth_open):
-  sender signs a canonical transcript with ML-DSA-65 before encryption.
-  Recipient must supply expected sender identity to verify.
+  sender encrypts first (anonymous seal), then signs a canonical transcript
+  over the finished envelope with ML-DSA-65. Recipient verifies the signature
+  before decrypting. Expected sender identity must be supplied.
 
 Neither mode is forward-secret against later recipient key compromise.
 
@@ -529,6 +530,18 @@ def _verify_authenticated_envelope(
         raise ValueError(f"Unsupported envelope version: {envelope.get('version')}")
     if envelope.get("suite") != SUITE:
         raise ValueError(f"Unsupported envelope suite: {envelope.get('suite')}")
+
+    # LEGACY WARNING: v1 authenticated envelopes skip timestamp freshness,
+    # making them replayable indefinitely. This is accepted for backwards
+    # compatibility but should trigger a visible warning to the caller.
+    is_v1 = envelope.get("version") == _ENVELOPE_VERSION_V1
+    v1_warning = None
+    if is_v1:
+        v1_warning = (
+            "WARNING: This is a v1 envelope without signed timestamps. "
+            "It has no freshness protection and can be replayed indefinitely. "
+            "Upgrade to pqc-mcp-v2 envelopes for replay protection."
+        )
     sig_alg = envelope.get("sender_signature_algorithm", "")
     if not sig_alg:
         raise ValueError("Envelope is not authenticated (no sender_signature_algorithm)")
@@ -630,7 +643,7 @@ def _verify_authenticated_envelope(
         except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError(f"Invalid envelope timestamp: {exc}") from exc
 
-    return {
+    result = {
         "sender_key_fingerprint": envelope_fp,
         "sender_signature_algorithm": sig_alg,
         "recipient_classical_key_fingerprint": envelope["recipient_classical_key_fingerprint"],
@@ -639,6 +652,9 @@ def _verify_authenticated_envelope(
         "suite": envelope["suite"],
         "timestamp": envelope_timestamp or None,
     }
+    if v1_warning:
+        result["warning"] = v1_warning
+    return result
 
 
 def hybrid_auth_open(
