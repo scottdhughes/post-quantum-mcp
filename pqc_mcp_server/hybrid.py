@@ -343,6 +343,9 @@ def hybrid_open(
     pqc_sk: bytes,
 ) -> dict[str, Any]:
     """Decrypt a sealed envelope."""
+    # Validate envelope size before any processing
+    _validate_envelope_size(envelope)
+
     # Validate transmitted header fields before any crypto
     if envelope.get("version") not in _ACCEPTED_VERSIONS:
         raise ValueError(f"Unsupported envelope version: {envelope.get('version')}")
@@ -464,6 +467,33 @@ def hybrid_auth_seal(
 # Default max envelope age for replay protection (24 hours)
 _MAX_ENVELOPE_AGE_SECONDS = 24 * 60 * 60
 
+# Envelope field size limits (prevent resource exhaustion / memory bombs)
+_MAX_B64_FIELD_SIZE = 1_000_000  # 1MB base64 = ~750KB decoded
+_MAX_ENVELOPE_FIELDS = 50  # prevent field-count DoS
+
+_SIZE_LIMITED_FIELDS = (
+    "ciphertext", "pqc_ciphertext", "signature",
+    "sender_public_key", "x25519_ephemeral_public_key",
+)
+
+
+def _validate_envelope_size(envelope: dict[str, Any]) -> None:
+    """Reject oversized or pathological envelopes before any crypto processing.
+
+    Prevents: memory bombs via huge base64 fields, field-count DoS,
+    and resource exhaustion during base64 decoding.
+    """
+    if len(envelope) > _MAX_ENVELOPE_FIELDS:
+        raise ValueError(
+            f"Envelope has {len(envelope)} fields (max {_MAX_ENVELOPE_FIELDS})"
+        )
+    for field in _SIZE_LIMITED_FIELDS:
+        val = envelope.get(field, "")
+        if isinstance(val, str) and len(val) > _MAX_B64_FIELD_SIZE:
+            raise ValueError(
+                f"Envelope field '{field}' is {len(val)} chars (max {_MAX_B64_FIELD_SIZE})"
+            )
+
 
 def _verify_authenticated_envelope(
     envelope: dict[str, Any],
@@ -480,6 +510,9 @@ def _verify_authenticated_envelope(
     Used by both hybrid_auth_open (verify then decrypt) and
     hybrid_auth_verify (verify only, no secret keys needed).
     """
+    # Validate envelope size before any processing (prevents resource exhaustion)
+    _validate_envelope_size(envelope)
+
     # Require exactly one sender binding
     if expected_sender_public_key is None and expected_sender_fingerprint is None:
         raise SenderVerificationError(
