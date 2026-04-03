@@ -767,15 +767,19 @@ def _verify_authenticated_envelope(
     signature = base64.b64decode(envelope["signature"], validate=True)
 
     # Extract timestamp for replay protection
-    # SECURITY: v2 envelopes MUST have a timestamp. A malicious sender could
+    # SECURITY: v2+ envelopes MUST have a timestamp. A malicious sender could
     # otherwise omit it to create eternally-replayable envelopes (Ghost
     # Timestamp Replay — Codex adversarial finding). v1 envelopes are exempt.
     envelope_timestamp = envelope.get("timestamp", "")
-    is_v2 = envelope.get("version") == ENVELOPE_VERSION
-    if is_v2 and not envelope_timestamp:
+    requires_timestamp = envelope.get("version") not in (
+        _ENVELOPE_VERSION_V1,
+        None,
+    )
+    if requires_timestamp and not envelope_timestamp:
         raise ValueError(
-            "v2 envelopes must include a timestamp for replay protection. "
-            "Missing timestamp may indicate a forged or downgraded envelope."
+            f"{envelope.get('version')} envelopes must include a timestamp "
+            "for replay protection. Missing timestamp may indicate a forged "
+            "or downgraded envelope."
         )
     # NOTE: v1 envelopes skip timestamp requirement (backwards compat).
     # A sender could deliberately use v1 to avoid freshness checks.

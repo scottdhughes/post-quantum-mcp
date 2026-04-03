@@ -29,9 +29,17 @@ _DEFAULT_CACHE_FILE = os.path.join(_DEFAULT_STATE_DIR, "replay-cache.json")
 
 
 def signature_digest(envelope: dict[str, Any]) -> str:
-    """SHA3-256 hex digest of the envelope's signature bytes."""
+    """SHA3-256 hex digest of the envelope's signature bytes.
+
+    Raises ValueError if signature is missing or empty — prevents silent
+    hashing of b"" which would collide across all unsigned envelopes.
+    """
     sig_b64 = envelope.get("signature", "")
-    sig_bytes = base64.b64decode(sig_b64, validate=True) if sig_b64 else b""
+    if not sig_b64:
+        raise ValueError("Cannot compute replay digest: envelope has no signature")
+    sig_bytes = base64.b64decode(sig_b64, validate=True)
+    if not sig_bytes:
+        raise ValueError("Cannot compute replay digest: signature decodes to empty")
     return hashlib.sha3_256(sig_bytes).hexdigest()
 
 
@@ -143,5 +151,6 @@ def get_replay_cache() -> ReplayCache:
             _CACHE = ReplayCache.__new__(ReplayCache)
             _CACHE.cache_file = ""
             _CACHE.ttl_seconds = _DEFAULT_TTL
+            _CACHE.max_size = _DEFAULT_MAX_SIZE
             _CACHE._cache = {}
     return _CACHE

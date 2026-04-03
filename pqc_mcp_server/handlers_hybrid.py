@@ -201,6 +201,11 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
     _validate_envelope_size(envelope)
 
     # Replay dedup: check BEFORE verification, mark AFTER success.
+    # CONCURRENCY NOTE: Two concurrent opens of the same valid envelope can
+    # both pass check() before either calls mark(). This is a documented
+    # tradeoff for single-process async — avoids junk pre-blocking at the
+    # cost of not guaranteeing one-time acceptance under concurrency.
+    # For multi-process, add a lock or two-phase reserve/finalize pattern.
     cache = get_replay_cache()
     digest = signature_digest(envelope)
     if cache.check(digest):
@@ -222,6 +227,14 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
         max_age_int = int(max_age)
         if max_age_int < 0:
             raise ValueError("max_age_seconds must be non-negative (0 = disabled)")
+        # Reject freshness windows exceeding replay cache TTL — otherwise
+        # replays can succeed after cache entries expire (ChatGPT finding)
+        cache_ttl = cache.ttl_seconds
+        if max_age_int > cache_ttl:
+            raise ValueError(
+                f"max_age_seconds ({max_age_int}) exceeds replay cache TTL "
+                f"({cache_ttl}). Increase cache TTL or reduce freshness window."
+            )
         kwargs["max_age_seconds"] = max_age_int
     result = hybrid_auth_open(envelope, classical_sk, pqc_sk, **kwargs)
 
@@ -258,6 +271,14 @@ def handle_hybrid_auth_verify(arguments: dict[str, Any]) -> dict[str, Any]:
         max_age_int = int(max_age)
         if max_age_int < 0:
             raise ValueError("max_age_seconds must be non-negative (0 = disabled)")
+        # Reject freshness windows exceeding replay cache TTL — otherwise
+        # replays can succeed after cache entries expire (ChatGPT finding)
+        cache_ttl = cache.ttl_seconds
+        if max_age_int > cache_ttl:
+            raise ValueError(
+                f"max_age_seconds ({max_age_int}) exceeds replay cache TTL "
+                f"({cache_ttl}). Increase cache TTL or reduce freshness window."
+            )
         kwargs["max_age_seconds"] = max_age_int
     result = hybrid_auth_verify(envelope, **kwargs)
     result["replay_seen"] = replay_seen
