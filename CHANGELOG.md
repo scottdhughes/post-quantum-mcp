@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-04-02
+## [0.6.0] - 2026-04-02
 
 ### Changed
 - **BREAKING:** Envelope version bumped from `pqc-mcp-v1` to `pqc-mcp-v2`
@@ -13,29 +13,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound into the derivation for domain separation (NIST SP 800-56C defense-in-depth)
 - Auth transcript prefix updated to `pqc-mcp-auth-v2`
 - AAD construction now uses envelope version dynamically
+- Module docstring corrected: authenticated envelopes encrypt first (anonymous
+  seal), then sign the finished envelope — not "sign before encryption"
 
 ### Added
-- **Replay protection:** Authenticated envelopes include a signed timestamp.
-  `hybrid_auth_open` checks freshness after signature verification (24h default,
-  configurable via `max_age_seconds`). Timestamp is covered by the ML-DSA
-  signature — stripping or modifying it invalidates the envelope.
-- Backwards-compatible version acceptance: `hybrid_open` and `hybrid_auth_open`
-  accept both `pqc-mcp-v1` and `pqc-mcp-v2` envelopes. V1 envelopes use the
-  original HKDF prefix and skip timestamp checks.
+- **`pqc_hybrid_auth_verify`**: Verify sender signature without decrypting.
+  Checks sender binding, fingerprint consistency, ML-DSA-65 signature, and
+  timestamp freshness. No secret keys needed. Returns `replay_seen` advisory.
+- **Replay protection:** Signed timestamps in v2 envelopes + JSON-backed
+  signature-digest cache (`replay_cache.py`). Freshness configurable via
+  `max_age_seconds` (now exposed on MCP tool schemas). Check-before-decrypt,
+  mark-after-success pattern prevents pre-image blocking.
+- **Security policy:** `security_policy.py` with `PQC_REQUIRE_KEY_HANDLES`
+  env var to reject raw secret keys in tool calls.
+- **Envelope size validation:** `_validate_envelope_size()` — max 1MB per
+  base64 field, max 50 fields. Checked before any crypto or replay processing.
+- **ML-KEM-768 public key validation:** Rejects empty/truncated/wrong-size keys.
+- **ML-DSA-65 key size validation:** Rejects wrong-type keys (prevents liboqs
+  silently accepting undersized signing keys).
+- **v1 legacy warning:** v1 authenticated envelopes return a loud warning about
+  missing freshness protection. v2 envelopes require timestamps.
+- **Ghost Timestamp protection:** v2 envelopes must include a timestamp; missing
+  timestamps are rejected before signature verification.
 - `pqc_mcp_server.filesystem` module: `ensure_secure_directory` (0o700) and
-  `ensure_secure_file` (0o600) helpers for securing `~/.pqc/` paths.
-- Clock skew tolerance: future timestamps rejected if >5 minutes ahead.
-- New test class `TestReplayProtection` covering timestamp signing, staleness
-  rejection, timestamp stripping detection, and freshness acceptance.
+  `ensure_secure_file` (0o600) helpers for `~/.pqc/` paths.
+- `scripts/install-liboqs.sh`: Reusable installer with `--prefix` and `--version`.
+- `include_secret_key` parameter on `pqc_generate_keypair` to redact secrets.
+- Negative `max_age_seconds` rejection (only 0 or positive accepted).
+- Backwards-compatible v1 acceptance with documented deprecation path.
+- `_verify_authenticated_envelope()` shared function eliminates ~80 lines of
+  duplication between `hybrid_auth_open` and `hybrid_auth_verify`.
+- Wycheproof test vectors (AES-256-GCM, X25519, HKDF-SHA256: 834+ vectors).
+- Hypothesis property-based fuzzing (530+ random inputs).
+- Protocol mutation fuzzer (500+ mutated envelopes).
+- High-iteration native fuzzing (13,300 iterations: KEM, DSA, combiner, HKDF).
+- `SECURITY_AUDIT.md`: Formal audit report from multi-model adversarial review.
+- `ROADMAP.md`: Phased improvement plan with projected scores.
 
 ### Fixed
-- `ValueError` from `int()` parsing now caught in timestamp validation
-  (previously only `TypeError` and `OverflowError` were handled).
+- `ValueError` from `int()` parsing now caught in timestamp validation.
+- Pre-verification cache marking (Codex finding): replay cache check moved
+  before verification, marking moved after success.
+- Cache-flood DoS: max 50K entries with oldest-first eviction.
+- Stale `test_utilities.py` v1 assertion.
+- Stale `EXPECTED_TOOLS` in `test_server.py`.
+- `tools.py` missing `include_secret_key` in schema.
+- `hybrid_auth_verify` uncaught KeyError on malformed envelopes.
+- Dead code: v1_warning was unreachable (return before attachment).
+- Signature digest computed before envelope size validation in handlers.
 
 ### Security
-- Adversarial review conducted via multi-model analysis (Qwen 3.5 + Codex + Claude).
-  Findings: nonce derivation confirmed safe for single-shot protocol; replay
-  protection gap identified and fixed; file permissions helper added.
+- 25 findings from multi-model adversarial review (Claude Opus 4.6, Codex
+  GPT-5.4, Qwen 3.5 35B). 19 fixed, 6 accepted by design.
+- ~15,750 test inputs: zero crashes, zero key leaks.
+- Prompt injection testing: 27 payloads, all contained.
+- Content leakage audit: 29 checks, zero leaks.
 
 ## [0.4.0] - 2026-04-01
 

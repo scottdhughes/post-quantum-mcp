@@ -5,7 +5,7 @@
 [![liboqs](https://img.shields.io/badge/liboqs-0.15.0-green.svg)](https://openquantumsafe.org/)
 [![MCP](https://img.shields.io/badge/MCP-1.6+-purple.svg)](https://modelcontextprotocol.io/)
 
-> **Research and Prototyping Only.** This server uses [liboqs](https://github.com/open-quantum-safe/liboqs), which is explicitly not recommended for production use or for protecting sensitive data. Secret keys and shared secrets appear in tool output, which may enter model context, client logs, or transcripts. Suitable for experimentation, education, and interoperability testing.
+> **Research and Prototyping Only.** This server uses [liboqs](https://github.com/open-quantum-safe/liboqs), which is explicitly not recommended for production use or for protecting sensitive data. When using `store_as` mode (recommended), secret keys are redacted from tool output and held in a session-scoped keyring. Without `store_as`, secret keys and shared secrets appear in tool output, which may enter model context, client logs, or transcripts. Set `PQC_REQUIRE_KEY_HANDLES=1` to enforce handle-only mode for hybrid envelope operations (note: raw PQC tools like `pqc_sign`/`pqc_decapsulate` are not yet covered). Suitable for experimentation, education, and interoperability testing.
 
 A **Model Context Protocol (MCP) server** that provides post-quantum cryptographic operations using [Open Quantum Safe's liboqs](https://openquantumsafe.org/). Enables AI assistants like Claude to perform quantum-resistant cryptographic operations including key generation, encryption, signing, and verification.
 
@@ -55,6 +55,11 @@ make -j4 && make install
 sudo apt-get install liboqs-dev
 ```
 
+**Alternative:** Use the bundled install script which automates the above:
+```bash
+bash scripts/install-liboqs.sh
+```
+
 #### 2. Clone and Install
 
 ```bash
@@ -93,6 +98,8 @@ Add to your MCP configuration:
   }
 }
 ```
+
+The server can also be run directly via `python -m pqc_mcp_server`.
 
 ## Available Tools
 
@@ -175,13 +182,28 @@ Suite: `mlkem768-x25519-sha3-256` — borrows the KEM combiner from the LAMPS co
 This is an **anonymous sealed-box** construction providing hybrid confidentiality with ciphertext integrity. It is not forward-secret against recipient key compromise, and it is not sender-authenticated.
 
 ### `pqc_hybrid_keygen`
-Generate a hybrid keypair bundle. No parameters needed.
+Generate a hybrid keypair bundle.
 
+**Recommended: with `store_as` (secret keys redacted)**
+```json
+// Input
+{"store_as": "alice"}
+
+// Output — no secret keys
+{
+  "suite": "mlkem768-x25519-sha3-256",
+  "handle": "alice",
+  "classical": {"algorithm": "X25519", "public_key": "DeRN3xLbEglMdXKO7P98cAvc...", "fingerprint": "a1b2c3d4..."},
+  "pqc": {"algorithm": "ML-KEM-768", "public_key": "gDsL8UgEVcMeJgUOQgSlAotx...", "fingerprint": "e5f6a7b8..."}
+}
+```
+
+**Without `store_as` (raw keys returned — not recommended):**
 ```json
 // Input
 {}
 
-// Output
+// Output — secret keys exposed in tool output
 {
   "suite": "mlkem768-x25519-sha3-256",
   "classical": {
@@ -214,7 +236,7 @@ Encrypt/decrypt plaintext using hybrid encapsulation + AES-256-GCM. Full-header 
 // Seal output
 {
   "envelope": {
-    "version": "pqc-mcp-v1",
+    "version": "pqc-mcp-v2",
     "suite": "mlkem768-x25519-sha3-256",
     "x25519_ephemeral_public_key": "6+b1Y8AkgEycKL5wL2cIeSMv...",
     "pqc_ciphertext": "DF+PYy4zx+OmnW8wLD3EL+4M...",
@@ -254,21 +276,21 @@ This is a **sender-authenticated sealed-envelope** construction. It is still not
 ### `pqc_hybrid_auth_seal`
 Encrypt + sign. Requires sender ML-DSA-65 signing keys + recipient hybrid keys.
 
+**Recommended: with key handles**
 ```json
 // Input
 {
   "plaintext": "Authenticated message",
-  "recipient_classical_public_key": "<base64 X25519 public key>",
-  "recipient_pqc_public_key": "<base64 ML-KEM-768 public key>",
-  "sender_secret_key": "<base64 ML-DSA-65 secret key>",
-  "sender_public_key": "<base64 ML-DSA-65 public key>"
+  "recipient_key_store_name": "bob",
+  "sender_key_store_name": "alice-signing"
 }
 
 // Output
 {
   "envelope": {
-    "version": "pqc-mcp-v1",
+    "version": "pqc-mcp-v2",
     "suite": "mlkem768-x25519-sha3-256",
+    
     "sender_signature_algorithm": "ML-DSA-65",
     "sender_public_key": "0ji6POTItnZUX8rELwVwWSOV...",
     "sender_key_fingerprint": "0f617ece2f1d04c0...",
@@ -279,6 +301,18 @@ Encrypt + sign. Requires sender ML-DSA-65 signing keys + recipient hybrid keys.
     "ciphertext": "6OYdADdh0eH/LviD...",
     "signature": "BOniPALs1kfhWcRh..."
   }
+}
+```
+
+**Alternative: with raw keys (not recommended)**
+```json
+// Input
+{
+  "plaintext": "Authenticated message",
+  "recipient_classical_public_key": "<base64 X25519 public key>",
+  "recipient_pqc_public_key": "<base64 ML-KEM-768 public key>",
+  "sender_secret_key": "<base64 ML-DSA-65 secret key>",
+  "sender_public_key": "<base64 ML-DSA-65 public key>"
 }
 ```
 
@@ -311,6 +345,70 @@ Verify sender + decrypt. Requires either `expected_sender_public_key` or `expect
   "sender_signature_algorithm": "ML-DSA-65",
   "authenticated": true
 }
+```
+
+### `pqc_hybrid_auth_verify`
+Verify sender signature on an authenticated envelope WITHOUT decrypting. No secret keys needed. Checks sender binding, fingerprint consistency, ML-DSA-65 signature, and timestamp freshness.
+
+```json
+// Input
+{
+  "envelope": { "...envelope from auth_seal..." },
+  "expected_sender_fingerprint": "0f617ece2f1d04c0..."
+}
+
+// Output
+{
+  "verified": true,
+  "sender_key_fingerprint": "0f617ece2f1d04c0...",
+  "sender_signature_algorithm": "ML-DSA-65",
+  "version": "pqc-mcp-v2",
+  "replay_seen": false,
+  "timestamp": "1711929600"
+}
+```
+
+### `pqc_envelope_inspect`
+Inspect envelope metadata without decrypting. No secret keys needed. Returns version, suite, fingerprints, and field sizes.
+
+```json
+// Input
+{"envelope": { "...any sealed or authenticated envelope..." }}
+
+// Output
+{
+  "version": "pqc-mcp-v2",
+  "suite": "mlkem768-x25519-sha3-256",
+  "authenticated": true,
+  "sender_key_fingerprint": "0f617ece2f1d04c0...",
+  
+  
+  "ciphertext_size": 1234,
+  "plaintext_size_approx": 1218,
+  "pqc_ciphertext_size": 1088,
+  "signature_size": 3309
+}
+```
+
+### `pqc_fingerprint`
+Compute SHA3-256 fingerprint of a public key. Returns lowercase hex.
+
+```json
+// Input
+{"public_key": "<base64-encoded public key>"}
+
+// Output
+{"fingerprint": "a1b2c3d4e5f6...", "algorithm": "SHA3-256"}
+```
+
+### `pqc_benchmark`
+Benchmark a PQC algorithm: timed keygen, encap/sign, decap/verify, and key/ciphertext/signature sizes.
+
+```json
+// Input
+{"algorithm": "ML-KEM-768", "iterations": 10}
+
+// Output — timing and size measurements
 ```
 
 ### Key Generation Flow
@@ -368,6 +466,30 @@ Generic PQC tools (`pqc_sign`, `pqc_verify`, `pqc_encapsulate`, `pqc_decapsulate
 
 Providing both a store name and raw keys for the same role is an error.
 
+### Key Store Management
+
+- **`pqc_key_store_save`**: Save a keygen output by name for convenient reference. Session-scoped, no persistence.
+- **`pqc_key_store_load`**: Load a stored key by name. Returns public material only for handle entries.
+- **`pqc_key_store_list`**: List all stored keys with metadata (names, types, fingerprints). No secret material shown.
+- **`pqc_key_store_delete`**: Delete a stored key by name.
+
+## Security Features
+
+### v2 Envelope Protocol
+Authenticated envelopes now include a signed `timestamp` field in the canonical transcript. On verification/open, the server checks freshness (default: 24 hours, configurable via `max_age_seconds`). Clock skew tolerance is 5 minutes. Anonymous (non-authenticated) envelopes are unaffected.
+
+### Replay Protection
+The server maintains a signature-digest cache (SHA3-256 of envelope signature bytes) with TTL. `pqc_hybrid_auth_verify` performs a read-only replay check. `pqc_hybrid_auth_open` performs check-before-decrypt and mark-after-success. The cache persists to `~/.pqc/state/replay-cache.json` and survives server restarts. Max 50,000 entries with oldest-first eviction.
+
+### Envelope Size Validation
+All envelopes are validated before any cryptographic processing: max 1MB per base64 field (`ciphertext`, `pqc_ciphertext`, `signature`, `sender_public_key`, `x25519_ephemeral_public_key`), max 50 fields total. Prevents memory bombs and resource exhaustion.
+
+### Server Security Policy
+Set `PQC_REQUIRE_KEY_HANDLES=1` to enforce handle-only mode: the server rejects any tool call that passes raw secret keys, forcing use of `store_as`/`key_store_name` for all secret-key operations. This is a server-side check that cannot be bypassed by a misbehaving agent.
+
+### v1 Backwards Compatibility
+v1 envelopes (`pqc-mcp-v1`) are accepted on open/verify for backwards compatibility but produce a loud warning. v1 envelopes lack signed timestamps and therefore skip freshness checks and provide no replay protection.
+
 ## Supported Algorithms
 
 > **Note:** Legacy algorithm names (Kyber, Dilithium, SPHINCS+) are accepted as aliases for compatibility with older liboqs versions.
@@ -413,16 +535,21 @@ post-quantum-mcp/
 ├── pqc_mcp_server/
 │   ├── __init__.py          # MCP server setup + tool dispatch
 │   ├── __main__.py          # Entry point
-│   ├── tools.py             # Tool definitions (23 tools)
+│   ├── tools.py             # Tool definitions (24 tools)
 │   ├── handlers_pqc.py      # Core PQC handlers (KEM, signatures, hashing)
 │   ├── handlers_hybrid.py   # Hybrid, authenticated, and utility handlers
 │   ├── hybrid.py            # Crypto implementation (X25519, ML-KEM, ML-DSA, envelopes)
-│   └── key_store.py         # Session-scoped secret-handle keyring
+│   ├── key_store.py         # Session-scoped secret-handle keyring
+│   ├── security_policy.py   # Server-enforced security checks (PQC_REQUIRE_KEY_HANDLES)
+│   ├── replay_cache.py      # Signature-digest replay dedup with TTL
+│   └── filesystem.py        # Secure directory/file permission helpers
 ├── examples/                # Runnable Python examples
 │   ├── anonymous_envelope.py
 │   ├── authenticated_envelope.py
 │   └── failure_modes.py
 ├── tests/                   # Unit, handler, and stdio integration tests
+├── scripts/
+│   └── install-liboqs.sh   # Automated liboqs build script
 ├── .github/workflows/       # CI pipeline (Python 3.10-3.13 × Ubuntu/macOS)
 ├── run.sh                   # Wrapper script (sets library paths, finds venv)
 ├── pyproject.toml           # Package configuration
@@ -446,8 +573,8 @@ post-quantum-mcp/
 - **Production readiness.** liboqs is research/prototyping software and is not recommended for production use or protecting sensitive data.
 
 ### Operational considerations
-- **Secret material in tool output.** Keys, shared secrets, and signatures appear in MCP tool responses, which may enter model context, client logs, or transcripts.
-- **Key storage.** Keys are generated in memory and returned in tool output. No persistent key storage.
+- **Secret material in tool output.** When using `store_as`, secret keys are redacted from tool output and held in a session-scoped handle keyring. Without `store_as`, keys, shared secrets, and signatures appear in MCP tool responses, which may enter model context, client logs, or transcripts. Set `PQC_REQUIRE_KEY_HANDLES=1` to reject raw secret keys server-wide.
+- **Key storage.** Keys generated with `store_as` are held in a session-scoped in-memory keyring (process-global, lost on server restart). Without `store_as`, keys are generated in memory and returned in tool output with no persistent storage.
 - **Side channels.** liboqs implementations aim to be constant-time but may not be suitable for all threat models.
 - **Anonymous vs authenticated.** `hybrid_seal`/`hybrid_open` is anonymous — anyone with recipient public keys can seal. `hybrid_auth_seal`/`hybrid_auth_open` adds sender authentication via ML-DSA-65 signature.
 - **Version compatibility.** See Tested Compatibility below.
