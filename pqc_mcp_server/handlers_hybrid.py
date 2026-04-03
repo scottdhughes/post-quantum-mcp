@@ -175,6 +175,7 @@ def handle_hybrid_open(arguments: dict[str, Any]) -> dict[str, Any]:
         )
     # v3: reject auth-seal mode at the handler level (use hybrid_auth_open)
     from pqc_mcp_server.hybrid import ENVELOPE_VERSION, _MODE_AUTH_SEAL
+
     env_mode = envelope.get("mode", "")
     if envelope.get("version") == ENVELOPE_VERSION and env_mode == _MODE_AUTH_SEAL:
         raise ValueError(
@@ -198,6 +199,7 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
 
     # Size validation BEFORE replay digest (prevents oversized b64 decode in digest)
     from pqc_mcp_server.hybrid import _validate_envelope_size
+
     _validate_envelope_size(envelope)
 
     # Replay dedup: check BEFORE verification, mark AFTER success.
@@ -249,6 +251,7 @@ def handle_hybrid_auth_verify(arguments: dict[str, Any]) -> dict[str, Any]:
 
     # Size validation BEFORE replay digest
     from pqc_mcp_server.hybrid import _validate_envelope_size
+
     _validate_envelope_size(envelope)
 
     # Replay dedup: read-only check (does NOT mark — allows verify-then-open)

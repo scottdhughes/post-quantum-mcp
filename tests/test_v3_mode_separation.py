@@ -82,7 +82,9 @@ class TestAnonUpgradeAttack:
         # Missing auth fields → rejected (either schema or field check)
         with pytest.raises(ValueError):
             hybrid_auth_open(
-                anon_env, keys["csk"], keys["psk"],
+                anon_env,
+                keys["csk"],
+                keys["psk"],
                 expected_sender_fingerprint=keys["sig_fp"],
             )
 
@@ -125,7 +127,9 @@ class TestCrossHandlerEnforcement:
         anon_env = hybrid_seal(b"anon", keys["cpk"], keys["ppk"])
         with pytest.raises((ValueError, SenderVerificationError)):
             hybrid_auth_open(
-                anon_env, keys["csk"], keys["psk"],
+                anon_env,
+                keys["csk"],
+                keys["psk"],
                 expected_sender_fingerprint=keys["sig_fp"],
             )
 
@@ -141,13 +145,13 @@ class TestLegacyCompat:
         assert r["plaintext"] == "v3 anon"
 
     def test_v3_roundtrip_auth(self, keys):
-        env = hybrid_auth_seal(
-            b"v3 auth", keys["cpk"], keys["ppk"], keys["sig_sk"], keys["sig_pk"]
-        )
+        env = hybrid_auth_seal(b"v3 auth", keys["cpk"], keys["ppk"], keys["sig_sk"], keys["sig_pk"])
         assert env["version"] == ENVELOPE_VERSION
         assert env["mode"] == _MODE_AUTH_SEAL
         r = hybrid_auth_open(
-            env, keys["csk"], keys["psk"],
+            env,
+            keys["csk"],
+            keys["psk"],
             expected_sender_fingerprint=keys["sig_fp"],
         )
         assert r["plaintext"] == "v3 auth"
@@ -158,9 +162,7 @@ class TestModeBoundTranscript:
     """Mode tampering in auth envelope invalidates signature."""
 
     def test_mode_tamper_fails_signature(self, keys):
-        env = hybrid_auth_seal(
-            b"signed", keys["cpk"], keys["ppk"], keys["sig_sk"], keys["sig_pk"]
-        )
+        env = hybrid_auth_seal(b"signed", keys["cpk"], keys["ppk"], keys["sig_sk"], keys["sig_pk"])
         env["mode"] = _MODE_ANON_SEAL  # tamper mode
         with pytest.raises(SenderVerificationError):
             hybrid_auth_verify(env, expected_sender_fingerprint=keys["sig_fp"])

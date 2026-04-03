@@ -93,8 +93,7 @@ def _validate_gcm_ciphertext(ct_bytes: bytes, label: str = "ciphertext") -> None
     """Validate GCM ciphertext has at least a tag (16 bytes)."""
     if len(ct_bytes) < _GCM_TAG_SIZE:
         raise ValueError(
-            f"{label} must be at least {_GCM_TAG_SIZE} bytes (GCM tag), "
-            f"got {len(ct_bytes)}"
+            f"{label} must be at least {_GCM_TAG_SIZE} bytes (GCM tag), " f"got {len(ct_bytes)}"
         )
 
 
@@ -406,9 +405,7 @@ def _core_encrypt(
     combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, recipient_classical_pk)
 
     # Derive AEAD key + nonce (v3: mode-bound, epk domain separation)
-    aes_key, nonce = _derive_aead_key_and_nonce(
-        combined_ss, eph_pk_bytes, mode=mode
-    )
+    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss, eph_pk_bytes, mode=mode)
 
     # Encrypt with AAD (v3: length-prefixed, mode-bound)
     aad = _build_aad(eph_pk_bytes, pqc_ct, mode=mode)
@@ -447,13 +444,9 @@ def hybrid_open(
         _validate_v3_schema(envelope)
         # Public API: reject auth-seal envelopes (must use hybrid_auth_open)
         env_mode = envelope.get("mode", "")
-        if (
-            envelope.get("version") == ENVELOPE_VERSION
-            and env_mode == _MODE_AUTH_SEAL
-        ):
+        if envelope.get("version") == ENVELOPE_VERSION and env_mode == _MODE_AUTH_SEAL:
             raise ValueError(
-                "auth-seal envelopes must be opened with hybrid_auth_open, "
-                "not hybrid_open"
+                "auth-seal envelopes must be opened with hybrid_auth_open, " "not hybrid_open"
             )
 
     # Validate transmitted header fields before any crypto
@@ -603,19 +596,30 @@ _MAX_B64_FIELD_SIZE = 1_000_000  # 1MB base64 = ~750KB decoded
 _MAX_ENVELOPE_FIELDS = 50  # prevent field-count DoS
 
 _SIZE_LIMITED_FIELDS = (
-    "ciphertext", "pqc_ciphertext", "signature",
-    "sender_public_key", "x25519_ephemeral_public_key",
+    "ciphertext",
+    "pqc_ciphertext",
+    "signature",
+    "sender_public_key",
+    "x25519_ephemeral_public_key",
 )
 
 
 _V3_ANON_REQUIRED = {
-    "version", "mode", "suite",
-    "x25519_ephemeral_public_key", "pqc_ciphertext", "ciphertext",
+    "version",
+    "mode",
+    "suite",
+    "x25519_ephemeral_public_key",
+    "pqc_ciphertext",
+    "ciphertext",
 }
 _V3_AUTH_REQUIRED = _V3_ANON_REQUIRED | {
-    "sender_signature_algorithm", "sender_public_key",
-    "sender_key_fingerprint", "recipient_classical_key_fingerprint",
-    "recipient_pqc_key_fingerprint", "timestamp", "signature",
+    "sender_signature_algorithm",
+    "sender_public_key",
+    "sender_key_fingerprint",
+    "recipient_classical_key_fingerprint",
+    "recipient_pqc_key_fingerprint",
+    "timestamp",
+    "signature",
 }
 _V3_AUTH_ONLY_FIELDS = _V3_AUTH_REQUIRED - _V3_ANON_REQUIRED
 
@@ -627,9 +631,7 @@ def _validate_envelope_size(envelope: dict[str, Any]) -> None:
     and resource exhaustion during base64 decoding.
     """
     if len(envelope) > _MAX_ENVELOPE_FIELDS:
-        raise ValueError(
-            f"Envelope has {len(envelope)} fields (max {_MAX_ENVELOPE_FIELDS})"
-        )
+        raise ValueError(f"Envelope has {len(envelope)} fields (max {_MAX_ENVELOPE_FIELDS})")
     for field in _SIZE_LIMITED_FIELDS:
         val = envelope.get(field, "")
         if isinstance(val, str) and len(val) > _MAX_B64_FIELD_SIZE:
@@ -653,16 +655,14 @@ def _validate_v3_schema(envelope: dict[str, Any]) -> None:
         unexpected = _V3_AUTH_ONLY_FIELDS & envelope.keys()
         if unexpected:
             raise ValueError(
-                f"anon-seal envelope contains auth-only fields: "
-                f"{', '.join(sorted(unexpected))}"
+                f"anon-seal envelope contains auth-only fields: " f"{', '.join(sorted(unexpected))}"
             )
     elif mode == _MODE_AUTH_SEAL:
         # Require all auth fields
         missing = _V3_AUTH_REQUIRED - envelope.keys()
         if missing:
             raise ValueError(
-                f"auth-seal envelope missing required fields: "
-                f"{', '.join(sorted(missing))}"
+                f"auth-seal envelope missing required fields: " f"{', '.join(sorted(missing))}"
             )
     else:
         raise ValueError(f"Unknown v3 mode: '{mode}'")
