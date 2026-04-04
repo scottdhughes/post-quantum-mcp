@@ -4,12 +4,23 @@ Tracks seen envelope signature digests with TTL to prevent replay attacks
 within the freshness window. Persists to ~/.pqc/state/replay-cache.json
 to survive server restarts.
 
+Process/concurrency boundary:
+    Replay dedup is guaranteed only within the current single-process
+    runtime model. The cache uses atomic file writes (tempfile + os.replace)
+    for crash safety, but does NOT use file locking. Under multi-process
+    contention, two concurrent opens of the same valid envelope can both
+    succeed — this is a documented operational tradeoff, not a protocol flaw.
+    For multi-process one-time-delivery guarantees, add file locking or a
+    reserve/finalize pattern at the handler layer.
+
 Design decisions:
-- Key on SHA3-256 of signature bytes (unique per envelope, no JSON canonicalization needed)
+- Key on SHA3-256 of signature bytes (unique per envelope, no JSON canonicalization)
 - hybrid_auth_verify: read-only check (returns replay_seen flag, does not mark)
-- hybrid_auth_open: check + mark after successful decryption
-  (avoids false positives when verify is called before open)
-- JSON file storage (matches research-tool philosophy — simple, inspectable)
+- hybrid_auth_open: check before verify, mark after successful decrypt
+  (prevents junk pre-blocking; accepts TOCTOU under single-process async)
+- JSON file storage (simple, inspectable, atomic writes via tempfile+rename)
+- Corrupted cache resets to empty on load (fails open — best-effort dedup)
+- Max 50K entries with oldest-first eviction (prevents cache-flood DoS)
 """
 
 import base64

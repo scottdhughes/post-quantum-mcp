@@ -50,5 +50,13 @@ The review used a three-model adversarial process: Claude Opus 4.6, Codex GPT-5.
 ## Testing Results
 Aggregate audit testing covered approximately 15,750 inputs across all tiers. Recorded results were zero crashes and zero key leaks. Wycheproof coverage passed 834+ vectors; Hypothesis passed 530+ random inputs; and protocol mutation fuzzing handled 650+ mutations cleanly.
 
+## Known Operational Tradeoffs
+
+**Replay-cache process boundary:** Replay dedup is guaranteed only within the current single-process runtime model. The cache uses atomic file writes for crash safety but does not use file locking. Under multi-process contention, two concurrent opens of the same valid envelope can both succeed. This is a documented operational tradeoff, not a protocol flaw. The multiprocess diagnostic probe (`test_replay_cache_multiprocess_probe.py`) characterizes this behavior.
+
+**liboqs version mismatch:** The C library (0.15.0) and Python wrapper (0.14.1) produce a cosmetic `UserWarning` at import. All algorithms used by this project work correctly under this pairing. See Tested Compatibility in the README for the supported version matrix.
+
+**v1/v2 backwards compatibility:** Legacy envelopes are accepted for decryption with loud warnings. v1 envelopes lack timestamps and skip freshness checks entirely. v2 envelopes lack mode binding. Both are treated as deprecated — the protocol is frozen at v3.
+
 ## Recommendations
-Phase 3 work should prioritize a real network transport with authenticated delivery semantics and replay-state coordination, then add forward secrecy through PQXDH or a ratcheting session design. In parallel, publish a dated deprecation plan for `pqc-mcp-v1` so freshness checks become universal and documentation can converge on the v2 envelope model.
+Phase 3 work should prioritize a real network transport with authenticated delivery semantics and replay-state coordination, then add forward secrecy through PQXDH or a ratcheting session design. In parallel, publish a dated deprecation plan for `pqc-mcp-v1` so freshness checks become universal and documentation can converge on the v3 envelope model.
