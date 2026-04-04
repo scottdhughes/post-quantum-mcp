@@ -40,7 +40,7 @@ Fetch pending envelopes for a recipient.
 
 **Query params:**
 - `limit` — max envelopes to return (default 10, max 100)
-- `after` — cursor for pagination (message ID)
+- `after` — opaque cursor for pagination (from `next_cursor` of previous response)
 
 **Response:**
 ```json
@@ -98,9 +98,12 @@ Acknowledge receipt and remove a message.
 
 ## Sender Filtering
 
-Optional allowlist per mailbox:
+Optional allowlist per mailbox. **Requires admin authentication.**
 
 ### PUT /mailboxes/:recipient_fp/allowlist
+
+**Headers:**
+- `Authorization: Bearer <RELAY_ADMIN_TOKEN>` (required)
 
 ```json
 {
@@ -108,10 +111,21 @@ Optional allowlist per mailbox:
 }
 ```
 
+**Status codes:**
+- `200 OK` — allowlist configured
+- `400 Bad Request` — invalid fingerprint format
+- `401 Unauthorized` — missing or invalid admin token
+- `429 Too Many Requests` — admin rate limited (10/min)
+
 When configured, POST checks `envelope.sender_key_fingerprint` against
 the allowlist before storing. Unknown senders get `403 Forbidden`.
 
 When not configured, all senders are accepted (open mailbox).
+
+Set `RELAY_ADMIN_TOKEN` as a Cloudflare Worker secret:
+```bash
+npx wrangler secret put RELAY_ADMIN_TOKEN
+```
 
 ## Rate Limiting
 

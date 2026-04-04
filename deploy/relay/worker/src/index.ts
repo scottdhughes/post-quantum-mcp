@@ -19,6 +19,7 @@ export interface Env {
   RATE_LIMIT_POST_PER_MIN: string;
   RATE_LIMIT_GET_PER_MIN: string;
   TRUSTED_IPS: string; // comma-separated IPs that bypass rate limiting
+  RELAY_ADMIN_TOKEN: string; // Bearer token for admin operations (allowlist)
 }
 
 interface StoredMessage {
@@ -134,9 +135,27 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return handleDelete(env, deleteMatch[1], deleteMatch[2]);
   }
 
-  // Route: PUT /mailboxes/:fp/allowlist
+  // Route: PUT /mailboxes/:fp/allowlist (requires admin auth + rate limited)
   const allowlistMatch = path.match(/^\/mailboxes\/([0-9a-f]{64})\/allowlist$/);
   if (allowlistMatch && method === "PUT") {
+    // Require admin token for allowlist mutations
+    const adminToken = env.RELAY_ADMIN_TOKEN || "";
+    const authHeader = request.headers.get("authorization") || "";
+    if (!adminToken || authHeader !== `Bearer ${adminToken}`) {
+      return errorResponse("unauthorized", "Admin authentication required for allowlist mutations", 401);
+    }
+    // Rate limit admin operations too
+    if (!trusted) {
+      try {
+        const result = await checkRateLimit(env.MAILBOX, `admin:${clientIp}`, 10); // 10/min for admin ops
+        if (!result.allowed) {
+          logRateLimitEvent("blocked", clientIp, method, path, result);
+          return errorResponse("rate_limited", "Too many admin requests.", 429);
+        }
+      } catch {
+        console.log(JSON.stringify({ event: "rate_limit_error", ip: clientIp, method, path }));
+      }
+    }
     return handleAllowlist(request, env, allowlistMatch[1]);
   }
 
@@ -246,10 +265,16 @@ async function handlePost(request: Request, env: Env, recipientFp: string): Prom
 async function handleGet(request: Request, env: Env, recipientFp: string): Promise<Response> {
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "10"), 100);
+  const afterCursor = url.searchParams.get("after") || undefined;
 
-  // List all messages in this mailbox
+  // List messages in this mailbox, with optional KV cursor for pagination
   const prefix = `mailbox:${recipientFp}:msg:`;
-  const listed = await env.MAILBOX.list({ prefix, limit });
+  const listOpts: KVNamespaceListOptions = { prefix, limit };
+  if (afterCursor) {
+    listOpts.cursor = afterCursor;
+  }
+
+  const listed = await env.MAILBOX.list(listOpts);
 
   const messages: StoredMessage[] = [];
   for (const key of listed.keys) {
@@ -267,7 +292,7 @@ async function handleGet(request: Request, env: Env, recipientFp: string): Promi
     mailbox: recipientFp,
     count: messages.length,
     messages,
-    next_cursor: listed.list_complete ? null : listed.cursor,
+    next_cursor: listed.list_complete ? null : (listed.cursor || null),
   });
 }
 
