@@ -95,11 +95,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   const postMatch = path.match(/^\/mailboxes\/([0-9a-f]{64})$/);
   if (postMatch && method === "POST") {
     if (!trusted) {
-      const postLimit = parseInt(env.RATE_LIMIT_POST_PER_MIN || "60");
-      const result = await checkRateLimit(env.MAILBOX, `post:${clientIp}`, postLimit);
-      if (!result.allowed) {
-        logRateLimitEvent("blocked", clientIp, method, path, result);
-        return errorResponse("rate_limited", "Too many requests. Try again later.", 429);
+      try {
+        const postLimit = parseInt(env.RATE_LIMIT_POST_PER_MIN || "60");
+        const result = await checkRateLimit(env.MAILBOX, `post:${clientIp}`, postLimit);
+        if (!result.allowed) {
+          logRateLimitEvent("blocked", clientIp, method, path, result);
+          return errorResponse("rate_limited", "Too many requests. Try again later.", 429);
+        }
+      } catch {
+        // KV error — fail open (allow request, log warning)
+        console.log(JSON.stringify({ event: "rate_limit_error", ip: clientIp, method, path }));
       }
     }
     return handlePost(request, env, postMatch[1]);
@@ -109,11 +114,15 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   const getMatch = path.match(/^\/mailboxes\/([0-9a-f]{64})$/);
   if (getMatch && method === "GET") {
     if (!trusted) {
-      const getLimit = parseInt(env.RATE_LIMIT_GET_PER_MIN || "120");
-      const result = await checkRateLimit(env.MAILBOX, `get:${clientIp}`, getLimit);
-      if (!result.allowed) {
-        logRateLimitEvent("blocked", clientIp, method, path, result);
-        return errorResponse("rate_limited", "Too many requests. Try again later.", 429);
+      try {
+        const getLimit = parseInt(env.RATE_LIMIT_GET_PER_MIN || "120");
+        const result = await checkRateLimit(env.MAILBOX, `get:${clientIp}`, getLimit);
+        if (!result.allowed) {
+          logRateLimitEvent("blocked", clientIp, method, path, result);
+          return errorResponse("rate_limited", "Too many requests. Try again later.", 429);
+        }
+      } catch {
+        console.log(JSON.stringify({ event: "rate_limit_error", ip: clientIp, method, path }));
       }
     }
     return handleGet(request, env, getMatch[1]);
@@ -177,7 +186,13 @@ async function handlePost(request: Request, env: Env, recipientFp: string): Prom
   const senderFp = (envelope.sender_key_fingerprint as string) || "";
 
   // Check allowlist
-  const meta = await getMailboxMeta(env.MAILBOX, recipientFp);
+  let meta: MailboxMeta;
+  try {
+    meta = await getMailboxMeta(env.MAILBOX, recipientFp);
+  } catch {
+    meta = { message_count: 0 }; // KV error — fail open
+  }
+
   if (meta.allowed_senders && meta.allowed_senders.length > 0) {
     if (!senderFp || !meta.allowed_senders.includes(senderFp)) {
       return errorResponse("forbidden", "Sender not in allowlist", 403);
@@ -200,15 +215,20 @@ async function handlePost(request: Request, env: Env, recipientFp: string): Prom
     envelope,
   };
 
-  await env.MAILBOX.put(
-    `mailbox:${recipientFp}:msg:${messageId}`,
-    JSON.stringify(stored),
-    { expirationTtl: ttl }
-  );
+  try {
+    await env.MAILBOX.put(
+      `mailbox:${recipientFp}:msg:${messageId}`,
+      JSON.stringify(stored),
+      { expirationTtl: ttl }
+    );
 
-  // Update count
-  meta.message_count += 1;
-  await setMailboxMeta(env.MAILBOX, recipientFp, meta);
+    // Update count (best-effort — race under concurrency is OK)
+    meta.message_count += 1;
+    await setMailboxMeta(env.MAILBOX, recipientFp, meta);
+  } catch (err) {
+    console.log(JSON.stringify({ event: "kv_error", op: "put", error: String(err) }));
+    return errorResponse("internal_error", "Failed to store envelope", 500);
+  }
 
   return jsonResponse(
     {
@@ -305,9 +325,29 @@ async function handleAllowlist(request: Request, env: Env, recipientFp: string):
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const start = Date.now();
     const response = await handleRequest(request, env);
+    const latency = Date.now() - start;
+
     // Add CORS headers to all responses
     response.headers.set("Access-Control-Allow-Origin", "*");
+
+    // Success-path observability
+    const method = request.method;
+    const path = new URL(request.url).pathname;
+    if (method !== "OPTIONS" && path !== "/" && path !== "/health") {
+      console.log(
+        JSON.stringify({
+          event: "request",
+          method,
+          path: path.substring(0, 80),
+          status: response.status,
+          latency_ms: latency,
+          timestamp: new Date().toISOString(),
+        })
+      );
+    }
+
     return response;
   },
 };

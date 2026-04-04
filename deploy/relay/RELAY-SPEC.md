@@ -113,6 +113,52 @@ the allowlist before storing. Unknown senders get `403 Forbidden`.
 
 When not configured, all senders are accepted (open mailbox).
 
+## Rate Limiting
+
+KV-backed sliding-window counter per client IP.
+
+| Method | Limit | Window |
+|--------|-------|--------|
+| POST | 60/min | 60 seconds |
+| GET | 120/min | 60 seconds |
+
+Configurable via `wrangler.toml` environment variables:
+- `RATE_LIMIT_POST_PER_MIN` — POST requests per minute per IP (default: 60)
+- `RATE_LIMIT_GET_PER_MIN` — GET requests per minute per IP (default: 120)
+- `TRUSTED_IPS` — comma-separated IPs that bypass rate limiting (default: empty)
+
+Example: `TRUSTED_IPS = "203.0.113.10,198.51.100.5"`
+
+Blocked requests return `429 Too Many Requests` with structured JSON log:
+```json
+{
+  "event": "rate_limit",
+  "action": "blocked",
+  "ip": "203.0.113.99",
+  "method": "POST",
+  "path": "/mailboxes/a1b2...",
+  "count": 60,
+  "limit": 60,
+  "remaining": 0,
+  "window": "ratelimit:post:203.0.113.99:27865660",
+  "timestamp": "2026-04-04T03:45:00.000Z"
+}
+```
+
+All requests (success + failure) emit a request-level log:
+```json
+{
+  "event": "request",
+  "method": "POST",
+  "path": "/mailboxes/a1b2...",
+  "status": 201,
+  "latency_ms": 45,
+  "timestamp": "2026-04-04T03:45:00.000Z"
+}
+```
+
+Rate limiting fails open on KV errors (request allowed, error logged).
+
 ## Security Properties
 
 - **Relay sees:** envelope metadata (version, mode, fingerprints, sizes)
