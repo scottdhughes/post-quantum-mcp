@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: ./scripts/install-liboqs.sh [--prefix /usr/local] [--version 0.15.0]
 
 PREFIX="/usr/local"
-VERSION="0.15.0"
+VERSION="0.14.0"  # Must match liboqs-python 0.14.1 — see README Tested Compatibility
 TMPDIR="${TMPDIR:-/tmp}"
 
 while [[ $# -gt 0 ]]; do

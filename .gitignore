@@ -58,3 +58,4 @@ dmypy.json
 .env.local
 *.local.json
 .hypothesis/
+.vendor/
