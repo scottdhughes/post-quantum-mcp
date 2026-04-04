@@ -145,7 +145,7 @@ describe("DELETE /mailboxes/:fp/:id", () => {
 });
 
 describe("PUT /mailboxes/:fp/allowlist", () => {
-  const ADMIN_TOKEN = "test-admin-token";
+  const ADMIN_TOKEN = "test-admin-token-do-not-use-in-production";
   const adminHeaders = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${ADMIN_TOKEN}`,

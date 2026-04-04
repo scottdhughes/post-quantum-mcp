@@ -35,6 +35,25 @@ interface MailboxMeta {
   allowed_senders?: string[];
 }
 
+// ─── Constant-time comparison ────────────────────────────
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const lengthMatch = a.length === b.length;
+  if (!lengthMatch) {
+    // Compare against dummy to avoid leaking length difference via timing.
+    // We still return false because lengthMatch is captured before reassignment.
+    b = a;
+  }
+  const encoder = new TextEncoder();
+  const aBuf = encoder.encode(a);
+  const bBuf = encoder.encode(b);
+  let diff = lengthMatch ? 0 : 1;
+  for (let i = 0; i < aBuf.length; i++) {
+    diff |= aBuf[i] ^ bBuf[i];
+  }
+  return diff === 0;
+}
+
 // ─── Helpers ─────────────────────────────────────────────
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -66,8 +85,14 @@ async function getMailboxMeta(kv: KVNamespace, fp: string): Promise<MailboxMeta>
   }
 }
 
-async function setMailboxMeta(kv: KVNamespace, fp: string, meta: MailboxMeta): Promise<void> {
-  await kv.put(`mailbox:${fp}:meta`, JSON.stringify(meta));
+async function setMailboxMeta(
+  kv: KVNamespace, fp: string, meta: MailboxMeta, ttlSeconds: number = 172800
+): Promise<void> {
+  // TTL on meta prevents permanent orphan block (Sonnet finding #10).
+  // Default 48h — longer than message TTL so active mailboxes stay valid.
+  await kv.put(`mailbox:${fp}:meta`, JSON.stringify(meta), {
+    expirationTtl: ttlSeconds,
+  });
 }
 
 // ─── Route Handler ───────────────────────────────────────
@@ -138,16 +163,10 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // Route: PUT /mailboxes/:fp/allowlist (requires admin auth + rate limited)
   const allowlistMatch = path.match(/^\/mailboxes\/([0-9a-f]{64})\/allowlist$/);
   if (allowlistMatch && method === "PUT") {
-    // Require admin token for allowlist mutations
-    const adminToken = env.RELAY_ADMIN_TOKEN || "";
-    const authHeader = request.headers.get("authorization") || "";
-    if (!adminToken || authHeader !== `Bearer ${adminToken}`) {
-      return errorResponse("unauthorized", "Admin authentication required for allowlist mutations", 401);
-    }
-    // Rate limit admin operations too
+    // Rate limit ALL admin attempts (before auth check — prevents brute force)
     if (!trusted) {
       try {
-        const result = await checkRateLimit(env.MAILBOX, `admin:${clientIp}`, 10); // 10/min for admin ops
+        const result = await checkRateLimit(env.MAILBOX, `admin:${clientIp}`, 10);
         if (!result.allowed) {
           logRateLimitEvent("blocked", clientIp, method, path, result);
           return errorResponse("rate_limited", "Too many admin requests.", 429);
@@ -155,6 +174,13 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       } catch {
         console.log(JSON.stringify({ event: "rate_limit_error", ip: clientIp, method, path }));
       }
+    }
+    // Constant-time admin token comparison (prevents timing oracle)
+    const adminToken = env.RELAY_ADMIN_TOKEN || "";
+    const authHeader = request.headers.get("authorization") || "";
+    const expected = `Bearer ${adminToken}`;
+    if (!adminToken || !timingSafeEqual(expected, authHeader)) {
+      return errorResponse("unauthorized", "Admin authentication required for allowlist mutations", 401);
     }
     return handleAllowlist(request, env, allowlistMatch[1]);
   }
