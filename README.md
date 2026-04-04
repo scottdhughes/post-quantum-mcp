@@ -597,6 +597,8 @@ This table shows the exact versions CI-tested on every push. Other combinations 
 
 **liboqs / liboqs-python version skew:** The C library at 0.15.0 paired with the Python wrapper at 0.14.1 triggers `UserWarning: liboqs version (major, minor) 0.15.0 differs from liboqs-python version 0.14.1`. This is cosmetic — all algorithms used by this project (ML-KEM-768, ML-DSA-65, ML-DSA-44/87, Falcon, SLH-DSA) work correctly. When liboqs-python 0.15.x reaches PyPI, update and the warning will resolve.
 
+**Compatibility stance:** The liboqs 0.15.0 + liboqs-python 0.14.1 pairing is the tested and supported configuration. The `UserWarning` is accepted in development. For production or demos, either align versions when liboqs-python 0.15.x is available, or suppress the warning explicitly. The project does not hard-fail on version mismatch — it warns and continues. All 248+ tests pass under this pairing.
+
 **What "may work" means:** Versions above the pyproject.toml floor but not in the CI-tested column are untested. They will likely work if no breaking API changes occurred, but we make no guarantee. If you encounter issues, pin to the CI-tested versions.
 
 ## Development
