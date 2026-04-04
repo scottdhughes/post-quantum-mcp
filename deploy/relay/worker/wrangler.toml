@@ -9,6 +9,7 @@ MESSAGE_TTL_SECONDS = "86400"     # 24 hours
 RATE_LIMIT_POST_PER_MIN = "60"
 RATE_LIMIT_GET_PER_MIN = "120"
 TRUSTED_IPS = ""              # comma-separated IPs that bypass rate limiting
+RELAY_ADMIN_TOKEN = "test-admin-token"  # override with wrangler secret for production
 
 [[kv_namespaces]]
 binding = "MAILBOX"

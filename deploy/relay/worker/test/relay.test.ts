@@ -145,11 +145,27 @@ describe("DELETE /mailboxes/:fp/:id", () => {
 });
 
 describe("PUT /mailboxes/:fp/allowlist", () => {
-  it("configures sender allowlist", async () => {
+  const ADMIN_TOKEN = "test-admin-token";
+  const adminHeaders = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${ADMIN_TOKEN}`,
+  };
+
+  it("rejects unauthenticated allowlist mutation", async () => {
     const fp = "1".repeat(64);
     const resp = await SELF.fetch(`https://relay/mailboxes/${fp}/allowlist`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ allowed_senders: [VALID_FP_2] }),
+    });
+    expect(resp.status).toBe(401);
+  });
+
+  it("configures sender allowlist with admin auth", async () => {
+    const fp = "1".repeat(64);
+    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}/allowlist`, {
+      method: "PUT",
+      headers: adminHeaders,
       body: JSON.stringify({ allowed_senders: [VALID_FP_2] }),
     });
     expect(resp.status).toBe(200);
@@ -159,10 +175,10 @@ describe("PUT /mailboxes/:fp/allowlist", () => {
 
   it("blocks non-allowlisted sender", async () => {
     const fp = "2".repeat(64);
-    // Set allowlist
+    // Set allowlist with admin auth
     await SELF.fetch(`https://relay/mailboxes/${fp}/allowlist`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: adminHeaders,
       body: JSON.stringify({ allowed_senders: ["c".repeat(64)] }),
     });
     // Try to send from non-allowlisted sender
