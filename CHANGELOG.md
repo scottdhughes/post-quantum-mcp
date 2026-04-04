@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-04-04
+
+### Added
+- **Cloudflare Worker relay** — opaque envelope mailbox for cross-machine A2A
+  messaging. Live at `https://quantum-seal-relay.novoamorx1.workers.dev`.
+  POST/GET/DELETE by recipient fingerprint. KV-backed with 24h TTL.
+- **Rate limiting** — KV-backed sliding-window counter per IP. POST: 60/min,
+  GET: 120/min. Configurable via `wrangler.toml`. Fails open on KV errors.
+- **Trusted IP allowlist** — `TRUSTED_IPS` env var bypasses rate limiting for
+  configured IPs.
+- **Structured observability** — JSON logs on blocked requests (rate limit events)
+  and all requests (method, path, status, latency_ms).
+- **Relay Worker CI** — TypeScript type-check, build validation, 12 Vitest tests
+  covering POST/GET/DELETE, allowlist, size limits, and error paths.
+- `deploy/relay/RELAY-SPEC.md` — transport contract specification with endpoints,
+  limits, rate limiting docs, log schema, and security properties.
+
+### Fixed
+- KV error handling under concurrent load — rate limiter and message storage
+  fail open with structured error logging instead of 500s.
+- `node_modules` accidentally committed — `.gitignore` updated.
+
+### Security
+- Relay never accesses private keys or decrypted content (opaque transport).
+- First successful remote PQC message delivery verified end-to-end.
+- Operational hardening: replay-cache process boundary documented, 15 state
+  corruption tests, 13 handle-policy negative tests, liboqs 0.14.0 vendored.
+
 ## [0.7.0] - 2026-04-03
 
 ### Changed

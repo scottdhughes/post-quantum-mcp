@@ -494,6 +494,25 @@ Set `PQC_REQUIRE_KEY_HANDLES=1` to enforce handle-only mode: the server rejects 
 ### v1/v2 Backwards Compatibility
 v1 envelopes (`pqc-mcp-v1`) are accepted on open/verify for backwards compatibility but produce a loud warning. v1 envelopes lack signed timestamps and therefore skip freshness checks and provide no replay protection. v2 envelopes (`pqc-mcp-v2`) are accepted but lack mode-binding; a deprecation warning is included in the response.
 
+## Relay Transport
+
+The project includes a Cloudflare Worker relay for cross-machine A2A messaging.
+
+**Live:** `https://quantum-seal-relay.novoamorx1.workers.dev`
+
+The relay is an opaque envelope mailbox — it stores and forwards JSON blobs without performing cryptographic operations or accessing private keys.
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/mailboxes/:fp` | POST | Deposit envelope into recipient's mailbox |
+| `/mailboxes/:fp` | GET | Fetch pending envelopes |
+| `/mailboxes/:fp/:id` | DELETE | Acknowledge receipt |
+| `/mailboxes/:fp/allowlist` | PUT | Configure sender allowlist |
+
+**Limits:** 50KB max envelope, 1000 msgs/mailbox, 24h TTL, rate limiting (60 POST/min, 120 GET/min per IP).
+
+**Security:** The relay never sees plaintext. End-to-end confidentiality, integrity, and sender authentication are enforced client-side. See `deploy/relay/RELAY-SPEC.md` for the full transport contract.
+
 ## Supported Algorithms
 
 > **Note:** Legacy algorithm names (Kyber, Dilithium, SPHINCS+) are accepted as aliases for compatibility with older liboqs versions.
