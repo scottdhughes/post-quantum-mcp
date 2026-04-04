@@ -272,8 +272,12 @@ def _build_auth_transcript(
     )
     if timestamp:
         transcript += _len_prefix(timestamp)
+    # v3: mode MUST be in transcript (even empty would be included).
+    # For legacy v1/v2 (mode=b""), omit to preserve backwards compat.
     if mode:
         transcript += _len_prefix(mode)
+    elif is_v3:
+        raise ValueError("v3 auth transcript requires non-empty mode")
     return transcript
 
 
@@ -814,16 +818,17 @@ def _verify_authenticated_envelope(
     # (timestamp is now trustworthy because it's covered by the signature)
     if envelope_timestamp and max_age_seconds > 0:
         try:
-            age = time.time() - int(envelope_timestamp)
-            if age > max_age_seconds:
-                raise ValueError(
-                    f"Envelope is stale ({int(age)}s old, max {max_age_seconds}s). "
-                    "Possible replay attack."
-                )
-            if age < -300:  # 5 min clock skew tolerance
-                raise ValueError("Envelope timestamp is in the future. Clock skew or tampering.")
+            ts_int = int(envelope_timestamp)
         except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError(f"Invalid envelope timestamp: {exc}") from exc
+        age = time.time() - ts_int
+        if age > max_age_seconds:
+            raise ValueError(
+                f"Envelope is stale ({int(age)}s old, max {max_age_seconds}s). "
+                "Possible replay attack."
+            )
+        if age < -300:  # 5 min clock skew tolerance
+            raise ValueError("Envelope timestamp is in the future. Clock skew or tampering.")
 
     result = {
         "sender_key_fingerprint": envelope_fp,
