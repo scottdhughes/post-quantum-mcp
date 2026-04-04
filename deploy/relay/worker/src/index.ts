@@ -31,6 +31,30 @@ interface MailboxMeta {
   allowed_senders?: string[];
 }
 
+// ─── Rate Limiting (KV-backed sliding window) ───────────
+
+async function checkRateLimit(
+  kv: KVNamespace,
+  key: string,
+  maxRequests: number,
+  windowSeconds: number = 60,
+): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const windowKey = `ratelimit:${key}:${Math.floor(now / windowSeconds)}`;
+
+  const raw = await kv.get(windowKey);
+  const count = raw ? parseInt(raw, 10) : 0;
+
+  if (count >= maxRequests) {
+    return false; // rate limited
+  }
+
+  await kv.put(windowKey, String(count + 1), {
+    expirationTtl: windowSeconds * 2,
+  });
+  return true; // allowed
+}
+
 // ─── Helpers ─────────────────────────────────────────────
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -84,15 +108,26 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     });
   }
 
+  // Rate limiting by IP
+  const clientIp = request.headers.get("cf-connecting-ip") || "unknown";
+
   // Route: POST /mailboxes/:fp
   const postMatch = path.match(/^\/mailboxes\/([0-9a-f]{64})$/);
   if (postMatch && method === "POST") {
+    const postLimit = parseInt(env.RATE_LIMIT_POST_PER_MIN || "60");
+    if (!await checkRateLimit(env.MAILBOX, `post:${clientIp}`, postLimit)) {
+      return errorResponse("rate_limited", "Too many requests. Try again later.", 429);
+    }
     return handlePost(request, env, postMatch[1]);
   }
 
   // Route: GET /mailboxes/:fp
   const getMatch = path.match(/^\/mailboxes\/([0-9a-f]{64})$/);
   if (getMatch && method === "GET") {
+    const getLimit = parseInt(env.RATE_LIMIT_GET_PER_MIN || "120");
+    if (!await checkRateLimit(env.MAILBOX, `get:${clientIp}`, getLimit)) {
+      return errorResponse("rate_limited", "Too many requests. Try again later.", 429);
+    }
     return handleGet(request, env, getMatch[1]);
   }
 
