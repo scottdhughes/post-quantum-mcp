@@ -11,5 +11,4 @@ RATE_LIMIT_GET_PER_MIN = "120"
 
 [[kv_namespaces]]
 binding = "MAILBOX"
-id = ""         # fill after `wrangler kv:namespace create MAILBOX`
-preview_id = "" # fill after `wrangler kv:namespace create MAILBOX --preview`
+id = "705ade496106445a8b604f0a0c340ac8"
