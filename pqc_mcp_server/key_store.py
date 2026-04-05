@@ -90,11 +90,42 @@ def _require_flat_kem(keys: dict[str, Any], name: str) -> None:
         )
 
 
-def _reject_secret_fields(key_data: dict[str, Any]) -> None:
-    """Reject key_data containing secret_key fields when handle-only policy is active.
+# Schema allowlist: only recognized key fields are permitted when policy is active.
+# This prevents smuggling secrets in unknown sub-dicts (e.g., {"extra": {"secret_key": "..."}}).
+# 9/9 model consensus: allowlist is more robust than recursive secret_key scanning.
+_ALLOWED_TOP_KEYS = frozenset(
+    {
+        "algorithm",
+        "type",
+        "suite",
+        "public_key",
+        "public_key_size",
+        "secret_key",
+        "fingerprint",
+        "classical",
+        "pqc",
+    }
+)
+_ALLOWED_SUB_KEYS = frozenset(
+    {
+        "algorithm",
+        "type",
+        "public_key",
+        "public_key_size",
+        "secret_key",
+        "fingerprint",
+    }
+)
 
-    Checks flat key structures and hybrid bundle sub-dicts.
+
+def _reject_secret_fields(key_data: dict[str, Any]) -> None:
+    """Reject key_data containing secret_key or unknown fields when policy is active.
+
+    Two-layer check:
+    1. Reject secret_key at top level and inside classical/pqc sub-dicts
+    2. Reject unknown top-level keys and unknown sub-dict keys (schema allowlist)
     """
+    # Secret key rejection
     if "secret_key" in key_data:
         raise ValueError(
             "key_store_save rejected: key_data contains 'secret_key'. "
@@ -109,6 +140,26 @@ def _reject_secret_fields(key_data: dict[str, Any]) -> None:
                 "PQC_REQUIRE_KEY_HANDLES policy prohibits importing raw secrets. "
                 "Use pqc_hybrid_keygen with store_as to generate keys as opaque handles."
             )
+
+    # Schema allowlist: reject unknown top-level keys
+    unknown_top = set(key_data.keys()) - _ALLOWED_TOP_KEYS
+    if unknown_top:
+        raise ValueError(
+            f"key_store_save rejected: unknown fields {sorted(unknown_top)}. "
+            "PQC_REQUIRE_KEY_HANDLES policy only permits recognized key structures."
+        )
+
+    # Schema allowlist: reject unknown keys inside classical/pqc sub-dicts
+    for component in ("classical", "pqc"):
+        sub = key_data.get(component)
+        if isinstance(sub, dict):
+            unknown_sub = set(sub.keys()) - _ALLOWED_SUB_KEYS
+            if unknown_sub:
+                raise ValueError(
+                    f"key_store_save rejected: unknown fields {sorted(unknown_sub)} "
+                    f"in key_data['{component}']. "
+                    "PQC_REQUIRE_KEY_HANDLES policy only permits recognized key structures."
+                )
 
 
 def handle_key_store_save(arguments: dict[str, Any]) -> dict[str, Any]:

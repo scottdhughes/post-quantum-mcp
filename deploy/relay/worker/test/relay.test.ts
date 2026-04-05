@@ -190,3 +190,94 @@ describe("PUT /mailboxes/:fp/allowlist", () => {
     expect(resp.status).toBe(403);
   });
 });
+
+describe("POST /mailboxes/:fp/register (mailbox token auth)", () => {
+  const ADMIN_TOKEN = "test-admin-token-do-not-use-in-production";
+  const adminHeaders = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${ADMIN_TOKEN}`,
+  };
+
+  it("rejects unauthenticated registration", async () => {
+    const fp = "3".repeat(64);
+    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}/register`, {
+      method: "POST",
+    });
+    expect(resp.status).toBe(401);
+  });
+
+  it("registers mailbox and returns token", async () => {
+    const fp = "3".repeat(64);
+    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}/register`, {
+      method: "POST",
+      headers: adminHeaders,
+    });
+    expect(resp.status).toBe(201);
+    const data = await resp.json() as { mailbox: string; token: string };
+    expect(data.mailbox).toBe(fp);
+    expect(data.token).toBeTruthy();
+  });
+
+  it("requires token for GET after registration", async () => {
+    const fp = "4".repeat(64);
+    // Register
+    const regResp = await SELF.fetch(`https://relay/mailboxes/${fp}/register`, {
+      method: "POST",
+      headers: adminHeaders,
+    });
+    const { token } = await regResp.json() as { token: string };
+
+    // GET without token — rejected
+    const noAuthResp = await SELF.fetch(`https://relay/mailboxes/${fp}`);
+    expect(noAuthResp.status).toBe(401);
+
+    // GET with token — accepted
+    const authResp = await SELF.fetch(`https://relay/mailboxes/${fp}`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
+    expect(authResp.status).toBe(200);
+  });
+
+  it("requires token for DELETE after registration", async () => {
+    const fp = "5".repeat(64);
+    // Register
+    const regResp = await SELF.fetch(`https://relay/mailboxes/${fp}/register`, {
+      method: "POST",
+      headers: adminHeaders,
+    });
+    const { token } = await regResp.json() as { token: string };
+
+    // Deposit a message (POST stays open — no token needed)
+    const postResp = await SELF.fetch(`https://relay/mailboxes/${fp}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: MINIMAL_ENVELOPE,
+    });
+    expect(postResp.status).toBe(201);
+    const { id } = await postResp.json() as { id: string };
+
+    // DELETE without token — rejected
+    const noAuthResp = await SELF.fetch(`https://relay/mailboxes/${fp}/${id}`, {
+      method: "DELETE",
+    });
+    expect(noAuthResp.status).toBe(401);
+
+    // DELETE with token — accepted
+    const authResp = await SELF.fetch(`https://relay/mailboxes/${fp}/${id}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${token}` },
+    });
+    expect(authResp.status).toBe(200);
+  });
+
+  it("POST stays open even after registration", async () => {
+    const fp = "5".repeat(64);
+    // POST without token — should still work (dumb pipe for deposits)
+    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: MINIMAL_ENVELOPE,
+    });
+    expect(resp.status).toBe(201);
+  });
+});

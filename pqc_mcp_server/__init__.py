@@ -260,7 +260,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 }
             )
         try:
-            return _json_response(_HYBRID_HANDLERS[name](arguments))
+            result = _HYBRID_HANDLERS[name](arguments)
+            # Support async handlers (e.g., handle_hybrid_auth_open uses asyncio.Lock)
+            if asyncio.iscoroutine(result):
+                result = await result
+            return _json_response(result)
         except binascii.Error as e:
             return _json_response({"error": f"Invalid base64 input: {e}"})
         except SenderVerificationError as e:

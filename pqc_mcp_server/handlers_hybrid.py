@@ -9,8 +9,15 @@ Raises specific exceptions for the dispatch layer to catch:
 """
 
 # mypy: disable-error-code="no-any-return"
+import asyncio
 import base64
 from typing import Any
+
+# Lock for replay-critical section in handle_hybrid_auth_open.
+# Ensures verify+decrypt+check_and_mark cannot be interleaved by
+# concurrent coroutines, even if a future refactor adds an await.
+# 8/9 model consensus: structural guarantee beats documentation.
+_auth_open_lock = asyncio.Lock()
 
 from pqc_mcp_server.hybrid import (
     hybrid_keygen,
@@ -194,7 +201,7 @@ def handle_hybrid_auth_seal(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"envelope": envelope}
 
 
-def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
+async def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
     envelope = arguments["envelope"]
 
     # Size validation BEFORE replay digest (prevents oversized b64 decode in digest)
@@ -202,49 +209,44 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
 
     _validate_envelope_size(envelope)
 
-    # Replay dedup: compute digest early (cheap SHA3-256), but check_and_mark
-    # runs AFTER verify+decrypt. This prevents junk pre-blocking (invalid
-    # envelopes never enter cache) while closing the TOCTOU window between
-    # the old separate check()/mark() calls. Safety guarantee: no `await`
-    # exists in this handler's call path (all crypto is synchronous liboqs),
-    # so the event loop cannot preempt between digest computation and
-    # check_and_mark. If an async operation is ever added here, this
-    # guarantee must be re-evaluated.
+    # Compute replay digest early (cheap SHA3-256 of signature bytes)
     cache = get_replay_cache()
     digest = signature_digest(envelope)
 
-    classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
-    expected_pk = (
-        _b64(arguments["expected_sender_public_key"])
-        if "expected_sender_public_key" in arguments
-        else None
-    )
-    expected_fp = arguments.get("expected_sender_fingerprint")
-    max_age = arguments.get("max_age_seconds")
-    kwargs: dict[str, Any] = {
-        "expected_sender_public_key": expected_pk,
-        "expected_sender_fingerprint": expected_fp,
-    }
-    if max_age is not None:
-        max_age_int = int(max_age)
-        if max_age_int < 0:
-            raise ValueError("max_age_seconds must be non-negative (0 = disabled)")
-        # Reject freshness windows exceeding replay cache TTL — otherwise
-        # replays can succeed after cache entries expire (ChatGPT finding)
-        cache_ttl = cache.ttl_seconds
-        if max_age_int > cache_ttl:
-            raise ValueError(
-                f"max_age_seconds ({max_age_int}) exceeds replay cache TTL "
-                f"({cache_ttl}). Increase cache TTL or reduce freshness window."
-            )
-        kwargs["max_age_seconds"] = max_age_int
-    result = hybrid_auth_open(envelope, classical_sk, pqc_sk, **kwargs)
+    # Replay-safe critical section: asyncio.Lock guarantees that
+    # verify+decrypt+check_and_mark cannot be interleaved by concurrent
+    # coroutines. This is a structural guarantee — safe regardless of
+    # whether future refactors add await points to the call path.
+    async with _auth_open_lock:
+        classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
+        expected_pk = (
+            _b64(arguments["expected_sender_public_key"])
+            if "expected_sender_public_key" in arguments
+            else None
+        )
+        expected_fp = arguments.get("expected_sender_fingerprint")
+        max_age = arguments.get("max_age_seconds")
+        kwargs: dict[str, Any] = {
+            "expected_sender_public_key": expected_pk,
+            "expected_sender_fingerprint": expected_fp,
+        }
+        if max_age is not None:
+            max_age_int = int(max_age)
+            if max_age_int < 0:
+                raise ValueError("max_age_seconds must be non-negative (0 = disabled)")
+            cache_ttl = cache.ttl_seconds
+            if max_age_int > cache_ttl:
+                raise ValueError(
+                    f"max_age_seconds ({max_age_int}) exceeds replay cache TTL "
+                    f"({cache_ttl}). Increase cache TTL or reduce freshness window."
+                )
+            kwargs["max_age_seconds"] = max_age_int
+        result = hybrid_auth_open(envelope, classical_sk, pqc_sk, **kwargs)
 
-    # Atomic check+mark AFTER successful verify+decrypt. Only verified
-    # envelopes enter the cache. Closes the TOCTOU window: under concurrent
-    # async, only the first coroutine to reach check_and_mark succeeds.
-    if cache.check_and_mark(digest):
-        raise ValueError("Duplicate envelope (replay detected)")
+        # Atomic check+mark AFTER successful verify+decrypt. Only verified
+        # envelopes enter the cache.
+        if cache.check_and_mark(digest):
+            raise ValueError("Duplicate envelope (replay detected)")
 
     return result
 

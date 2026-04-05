@@ -33,6 +33,7 @@ interface StoredMessage {
 interface MailboxMeta {
   message_count: number;
   allowed_senders?: string[];
+  token_hash?: string; // SHA-256 hash of mailbox bearer token (for GET/DELETE auth)
 }
 
 // ─── Constant-time comparison ────────────────────────────
@@ -69,6 +70,23 @@ function errorResponse(error: string, message: string, status: number): Response
 
 function generateId(): string {
   return crypto.randomUUID();
+}
+
+async function hashToken(token: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function getMailboxToken(request: Request): string | null {
+  const auth = request.headers.get("authorization") || "";
+  if (auth.startsWith("Bearer ")) {
+    return auth.slice(7);
+  }
+  return null;
 }
 
 function isValidFingerprint(fp: string): boolean {
@@ -108,7 +126,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       headers: {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
       },
     });
   }
@@ -151,13 +169,52 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         console.log(JSON.stringify({ event: "rate_limit_error", ip: clientIp, method, path }));
       }
     }
+    // Mailbox token auth: if mailbox has a token_hash, require valid token
+    const getMeta = await getMailboxMeta(env.MAILBOX, getMatch[1]);
+    if (getMeta.token_hash) {
+      const token = getMailboxToken(request);
+      if (!token || (await hashToken(token)) !== getMeta.token_hash) {
+        return errorResponse("unauthorized", "Mailbox token required for GET", 401);
+      }
+    }
     return handleGet(request, env, getMatch[1]);
   }
 
   // Route: DELETE /mailboxes/:fp/:id
   const deleteMatch = path.match(/^\/mailboxes\/([0-9a-f]{64})\/([a-f0-9-]{36})$/);
   if (deleteMatch && method === "DELETE") {
+    // Mailbox token auth: if mailbox has a token_hash, require valid token
+    const delMeta = await getMailboxMeta(env.MAILBOX, deleteMatch[1]);
+    if (delMeta.token_hash) {
+      const token = getMailboxToken(request);
+      if (!token || (await hashToken(token)) !== delMeta.token_hash) {
+        return errorResponse("unauthorized", "Mailbox token required for DELETE", 401);
+      }
+    }
     return handleDelete(env, deleteMatch[1], deleteMatch[2]);
+  }
+
+  // Route: POST /mailboxes/:fp/register (admin auth — creates mailbox token)
+  const registerMatch = path.match(/^\/mailboxes\/([0-9a-f]{64})\/register$/);
+  if (registerMatch && method === "POST") {
+    if (!trusted) {
+      try {
+        const result = await checkRateLimit(env.MAILBOX, `admin:${clientIp}`, 10);
+        if (!result.allowed) {
+          logRateLimitEvent("blocked", clientIp, method, path, result);
+          return errorResponse("rate_limited", "Too many admin requests.", 429);
+        }
+      } catch {
+        console.log(JSON.stringify({ event: "rate_limit_error", ip: clientIp, method, path }));
+      }
+    }
+    const adminToken = env.RELAY_ADMIN_TOKEN || "";
+    const authHeader = request.headers.get("authorization") || "";
+    const expected = `Bearer ${adminToken}`;
+    if (!adminToken || !timingSafeEqual(expected, authHeader)) {
+      return errorResponse("unauthorized", "Admin authentication required for mailbox registration", 401);
+    }
+    return handleRegister(env, registerMatch[1]);
   }
 
   // Route: PUT /mailboxes/:fp/allowlist (requires admin auth + rate limited)
@@ -230,7 +287,11 @@ async function handlePost(request: Request, env: Env, recipientFp: string): Prom
   // Extract sender fingerprint for metadata/filtering
   const senderFp = (envelope.sender_key_fingerprint as string) || "";
 
-  // Check allowlist
+  // Advisory sender-fingerprint filter (NOT a security boundary).
+  // The sender_key_fingerprint is self-reported in the envelope and can be
+  // spoofed. Recipient-side ML-DSA-65 signature verification in
+  // hybrid_auth_open is the authoritative sender authentication.
+  // This filter reduces junk for cooperating agents, not adversaries.
   let meta: MailboxMeta;
   try {
     meta = await getMailboxMeta(env.MAILBOX, recipientFp);
@@ -322,6 +383,24 @@ async function handleGet(request: Request, env: Env, recipientFp: string): Promi
   });
 }
 
+// ─── POST: Register Mailbox (admin) ─────────────────────
+
+async function handleRegister(env: Env, recipientFp: string): Promise<Response> {
+  const token = crypto.randomUUID();
+  const hash = await hashToken(token);
+  const meta = await getMailboxMeta(env.MAILBOX, recipientFp);
+  meta.token_hash = hash;
+  await setMailboxMeta(env.MAILBOX, recipientFp, meta);
+
+  // Return the raw token ONCE — caller must store it.
+  // Only the hash is persisted in KV.
+  return jsonResponse({
+    mailbox: recipientFp,
+    token,
+    message: "Store this token securely. It is required for GET and DELETE. It cannot be retrieved again.",
+  }, 201);
+}
+
 // ─── DELETE: Acknowledge Receipt ─────────────────────────
 
 async function handleDelete(env: Env, recipientFp: string, messageId: string): Promise<Response> {
@@ -342,7 +421,11 @@ async function handleDelete(env: Env, recipientFp: string, messageId: string): P
   return jsonResponse({ deleted: messageId });
 }
 
-// ─── PUT: Configure Allowlist ────────────────────────────
+// ─── PUT: Configure Advisory Sender Filter ──────────────
+// NOTE: This is an advisory sender-fingerprint filter, NOT authenticated
+// sender verification. The sender_key_fingerprint in envelopes is
+// self-reported and can be spoofed. For authenticated sender identity,
+// recipients must use pqc_hybrid_auth_open (ML-DSA-65 verification).
 
 async function handleAllowlist(request: Request, env: Env, recipientFp: string): Promise<Response> {
   let body: { allowed_senders?: string[] };

@@ -149,7 +149,8 @@ class TestSizeLimits:
 class TestReplayTOCTOU:
     """Same envelope must be rejected on second auth_open call."""
 
-    def test_replay_rejected_on_second_open(self):
+    @pytest.mark.asyncio
+    async def test_replay_rejected_on_second_open(self):
         """After a successful auth_open, replaying the same envelope raises."""
         enc = handle_hybrid_keygen({"store_as": "replay-enc"})
         sig = handle_generate_keypair({"algorithm": "ML-DSA-65", "store_as": "replay-sig"})
@@ -164,7 +165,7 @@ class TestReplayTOCTOU:
         envelope = envelope_result["envelope"]
 
         # First open — should succeed
-        result = handle_hybrid_auth_open(
+        result = await handle_hybrid_auth_open(
             {
                 "envelope": envelope,
                 "key_store_name": "replay-enc",
@@ -175,7 +176,7 @@ class TestReplayTOCTOU:
 
         # Second open — same envelope — must be rejected
         with pytest.raises(ValueError, match="[Rr]eplay|[Dd]uplicate"):
-            handle_hybrid_auth_open(
+            await handle_hybrid_auth_open(
                 {
                     "envelope": envelope,
                     "key_store_name": "replay-enc",
@@ -286,3 +287,85 @@ class TestKeyDataSizeLimit:
             }
         )
         assert result["saved"] == "normal"
+
+
+# ═══════════════════════════════════════════════
+# Schema allowlist tests (9-model consensus)
+# ═══════════════════════════════════════════════
+
+
+class TestSchemaAllowlist:
+    """Unknown fields in key_data must be rejected when policy is active."""
+
+    def test_unknown_top_level_key_rejected(self, policy_enabled):
+        """Smuggling via unknown sub-dict like {"extra": {"secret_key": ...}}."""
+        with pytest.raises(ValueError, match="unknown fields"):
+            handle_key_store_save(
+                {
+                    "name": "smuggled",
+                    "key_data": {
+                        "algorithm": "ML-DSA-65",
+                        "type": "signature",
+                        "public_key": "AAAA",
+                        "extra": {"secret_key": "BBBB"},
+                    },
+                }
+            )
+
+    def test_unknown_sub_key_rejected(self, policy_enabled):
+        """Unknown field inside classical/pqc sub-dict."""
+        with pytest.raises(ValueError, match="unknown fields"):
+            handle_key_store_save(
+                {
+                    "name": "smuggled-sub",
+                    "key_data": {
+                        "suite": "mlkem768-x25519-sha3-256",
+                        "classical": {
+                            "algorithm": "X25519",
+                            "public_key": "AAAA",
+                            "metadata": {"secret_key": "raw"},
+                        },
+                        "pqc": {
+                            "algorithm": "ML-KEM-768",
+                            "public_key": "CCCC",
+                        },
+                    },
+                }
+            )
+
+    def test_valid_hybrid_bundle_accepted(self, policy_enabled):
+        """Legitimate hybrid bundle (public-only) should pass schema check."""
+        result = handle_key_store_save(
+            {
+                "name": "valid-hybrid",
+                "key_data": {
+                    "suite": "mlkem768-x25519-sha3-256",
+                    "classical": {
+                        "algorithm": "X25519",
+                        "public_key": "AAAA",
+                        "fingerprint": "abcd1234",
+                    },
+                    "pqc": {
+                        "algorithm": "ML-KEM-768",
+                        "public_key": "CCCC",
+                        "fingerprint": "efgh5678",
+                    },
+                },
+            }
+        )
+        assert result["saved"] == "valid-hybrid"
+
+    def test_unknown_keys_allowed_without_policy(self):
+        """Without policy, unknown keys should still be accepted (backwards compat)."""
+        result = handle_key_store_save(
+            {
+                "name": "flexible",
+                "key_data": {
+                    "algorithm": "ML-DSA-65",
+                    "type": "signature",
+                    "public_key": "AAAA",
+                    "custom_metadata": "whatever",
+                },
+            }
+        )
+        assert result["saved"] == "flexible"

@@ -135,13 +135,14 @@ class TestHandlePolicyHybrid:
                 }
             )
 
-    def test_hybrid_auth_open_raw_recipient_rejected(self, policy_enabled, keys):
+    @pytest.mark.asyncio
+    async def test_hybrid_auth_open_raw_recipient_rejected(self, policy_enabled, keys):
         """Raw secret keys for hybrid auth open should be rejected.
         Note: envelope validation (signature_digest) may fire first on
         empty envelopes, but the policy check is still wired in."""
         enc = hybrid_keygen()
         with pytest.raises(ValueError):
-            handle_hybrid_auth_open(
+            await handle_hybrid_auth_open(
                 {
                     "envelope": {},
                     "classical_secret_key": enc["classical"]["secret_key"],
@@ -196,10 +197,11 @@ class TestWrongHandleType:
                 }
             )
 
-    def test_signing_handle_for_hybrid_open_rejected(self, keys):
+    @pytest.mark.asyncio
+    async def test_signing_handle_for_hybrid_open_rejected(self, keys):
         """Signing handle used for decryption should fail."""
         with pytest.raises(ValueError):
-            handle_hybrid_auth_open(
+            await handle_hybrid_auth_open(
                 {
                     "envelope": {"version": "pqc-mcp-v3", "mode": "auth-seal"},
                     "key_store_name": "test-sig",
@@ -226,9 +228,10 @@ class TestMissingHandle:
                 }
             )
 
-    def test_nonexistent_handle_for_hybrid_open(self):
+    @pytest.mark.asyncio
+    async def test_nonexistent_handle_for_hybrid_open(self):
         with pytest.raises(ValueError):
-            handle_hybrid_auth_open(
+            await handle_hybrid_auth_open(
                 {
                     "envelope": {"version": "pqc-mcp-v3", "mode": "auth-seal"},
                     "key_store_name": "nonexistent",

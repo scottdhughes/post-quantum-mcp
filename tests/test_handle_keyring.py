@@ -257,7 +257,8 @@ class TestHybridResolution:
         assert "envelope" in result
         assert result["envelope"]["sender_signature_algorithm"] == "ML-DSA-65"
 
-    def test_auth_open_with_store_name(self):
+    @pytest.mark.asyncio
+    async def test_auth_open_with_store_name(self):
         full_keys = hybrid_keygen()
         store_from_keygen("ao-r", full_keys, overwrite=True)
         sender_keys = handle_generate_keypair({"algorithm": "ML-DSA-65"})
@@ -269,7 +270,7 @@ class TestHybridResolution:
                 "sender_key_store_name": "ao-s",
             }
         )["envelope"]
-        result = handle_hybrid_auth_open(
+        result = await handle_hybrid_auth_open(
             {
                 "envelope": envelope,
                 "key_store_name": "ao-r",
@@ -334,7 +335,8 @@ class TestFullRoundtripViaStore:
         )
         assert result["plaintext"] == "store-only roundtrip"
 
-    def test_auth_seal_open_no_raw_keys(self):
+    @pytest.mark.asyncio
+    async def test_auth_seal_open_no_raw_keys(self):
         """Authenticated roundtrip with zero raw keys except sender binding."""
         full_keys = hybrid_keygen()
         store_from_keygen("art-r", full_keys, overwrite=True)
@@ -348,7 +350,7 @@ class TestFullRoundtripViaStore:
                 "sender_key_store_name": "art-s",
             }
         )["envelope"]
-        result = handle_hybrid_auth_open(
+        result = await handle_hybrid_auth_open(
             {
                 "envelope": envelope,
                 "key_store_name": "art-r",
