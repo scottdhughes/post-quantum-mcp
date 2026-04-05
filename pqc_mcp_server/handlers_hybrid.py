@@ -297,6 +297,12 @@ def handle_hybrid_auth_verify(arguments: dict[str, Any]) -> dict[str, Any]:
 def handle_envelope_inspect(arguments: dict[str, Any]) -> dict[str, Any]:
     """Inspect an envelope's metadata without decrypting. No secret keys needed."""
     envelope = arguments["envelope"]
+
+    # Size validation before any base64 decoding (Sonnet review finding)
+    from pqc_mcp_server.hybrid import _validate_envelope_size
+
+    _validate_envelope_size(envelope)
+
     result: dict[str, Any] = {
         "version": envelope.get("version"),
         "suite": envelope.get("suite"),
