@@ -7,7 +7,10 @@ Research/prototyping only.
 
 import base64
 import hashlib
+import json as _json
 from typing import Any
+
+_MAX_KEY_DATA_SIZE = 102_400  # 100 KB
 
 # Module-level store (lives for the server's lifetime)
 _STORE: dict[str, dict[str, Any]] = {}
@@ -87,6 +90,27 @@ def _require_flat_kem(keys: dict[str, Any], name: str) -> None:
         )
 
 
+def _reject_secret_fields(key_data: dict[str, Any]) -> None:
+    """Reject key_data containing secret_key fields when handle-only policy is active.
+
+    Checks flat key structures and hybrid bundle sub-dicts.
+    """
+    if "secret_key" in key_data:
+        raise ValueError(
+            "key_store_save rejected: key_data contains 'secret_key'. "
+            "PQC_REQUIRE_KEY_HANDLES policy prohibits importing raw secrets. "
+            "Use pqc_generate_keypair with store_as or pqc_hybrid_keygen with store_as."
+        )
+    for component in ("classical", "pqc"):
+        sub = key_data.get(component)
+        if isinstance(sub, dict) and "secret_key" in sub:
+            raise ValueError(
+                f"key_store_save rejected: key_data['{component}'] contains 'secret_key'. "
+                "PQC_REQUIRE_KEY_HANDLES policy prohibits importing raw secrets. "
+                "Use pqc_hybrid_keygen with store_as to generate keys as opaque handles."
+            )
+
+
 def handle_key_store_save(arguments: dict[str, Any]) -> dict[str, Any]:
     """Save a keygen output by name."""
     name = arguments["name"]
@@ -94,6 +118,17 @@ def handle_key_store_save(arguments: dict[str, Any]) -> dict[str, Any]:
 
     if not isinstance(key_data, dict):
         raise ValueError("key_data must be a JSON object (e.g., output of pqc_hybrid_keygen)")
+
+    # Policy enforcement: reject raw secrets when handle-only mode is active
+    from pqc_mcp_server.security_policy import get_policy
+
+    if get_policy().require_key_handles:
+        _reject_secret_fields(key_data)
+
+    # Size limit on key_data (prevents memory exhaustion via oversized dicts)
+    key_data_size = len(_json.dumps(key_data))
+    if key_data_size > _MAX_KEY_DATA_SIZE:
+        raise ValueError(f"key_data is {key_data_size} bytes (max {_MAX_KEY_DATA_SIZE})")
 
     entry = {
         "name": name,

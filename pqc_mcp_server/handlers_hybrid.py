@@ -202,16 +202,16 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
 
     _validate_envelope_size(envelope)
 
-    # Replay dedup: check BEFORE verification, mark AFTER success.
-    # CONCURRENCY NOTE: Two concurrent opens of the same valid envelope can
-    # both pass check() before either calls mark(). This is a documented
-    # tradeoff for single-process async — avoids junk pre-blocking at the
-    # cost of not guaranteeing one-time acceptance under concurrency.
-    # For multi-process, add a lock or two-phase reserve/finalize pattern.
+    # Replay dedup: compute digest early (cheap SHA3-256), but check_and_mark
+    # runs AFTER verify+decrypt. This prevents junk pre-blocking (invalid
+    # envelopes never enter cache) while closing the TOCTOU window between
+    # the old separate check()/mark() calls. Safety guarantee: no `await`
+    # exists in this handler's call path (all crypto is synchronous liboqs),
+    # so the event loop cannot preempt between digest computation and
+    # check_and_mark. If an async operation is ever added here, this
+    # guarantee must be re-evaluated.
     cache = get_replay_cache()
     digest = signature_digest(envelope)
-    if cache.check(digest):
-        raise ValueError("Duplicate envelope (replay detected)")
 
     classical_sk, pqc_sk = _resolve_hybrid_secret(arguments)
     expected_pk = (
@@ -240,8 +240,12 @@ def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
         kwargs["max_age_seconds"] = max_age_int
     result = hybrid_auth_open(envelope, classical_sk, pqc_sk, **kwargs)
 
-    # Mark AFTER successful verify+decrypt — only verified envelopes enter cache
-    cache.mark(digest)
+    # Atomic check+mark AFTER successful verify+decrypt. Only verified
+    # envelopes enter the cache. Closes the TOCTOU window: under concurrent
+    # async, only the first coroutine to reach check_and_mark succeeds.
+    if cache.check_and_mark(digest):
+        raise ValueError("Duplicate envelope (replay detected)")
+
     return result
 
 

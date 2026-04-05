@@ -29,7 +29,7 @@ try:
     import oqs  # noqa: F401
 
     HAS_LIBOQS = True
-except ImportError:
+except (ImportError, RuntimeError, OSError):
     HAS_LIBOQS = False
 
 try:
@@ -37,7 +37,7 @@ try:
     from pqc_mcp_server.hybrid import SenderVerificationError
 
     HAS_HYBRID = True
-except ImportError:
+except (ImportError, RuntimeError, OSError):
     HAS_HYBRID = False
 
     class InvalidTag(Exception):  # type: ignore[no-redef]
@@ -119,6 +119,99 @@ if HAS_HYBRID:
         "pqc_key_store_delete": handle_key_store_delete,
     }
 
+# --- Pre-dispatch input validation ---
+
+# Size limits (bytes/chars)
+_MAX_PLAINTEXT_SIZE = 1_048_576  # 1 MB
+_MAX_MESSAGE_SIZE = 1_048_576  # 1 MB
+_MAX_KEY_FIELD_SIZE = 102_400  # 100 KB
+
+# Expected types by field name
+_STRING_FIELDS = frozenset(
+    {
+        "algorithm",
+        "public_key",
+        "secret_key",
+        "ciphertext",
+        "message",
+        "signature",
+        "plaintext",
+        "plaintext_base64",
+        "name",
+        "store_as",
+        "key_store_name",
+        "classical_public_key",
+        "pqc_public_key",
+        "classical_secret_key",
+        "pqc_secret_key",
+        "x25519_ephemeral_public_key",
+        "pqc_ciphertext",
+        "sender_secret_key",
+        "sender_public_key",
+        "expected_sender_public_key",
+        "expected_sender_fingerprint",
+        "sender_key_store_name",
+        "recipient_key_store_name",
+        "type",
+    }
+)
+_DICT_FIELDS = frozenset({"envelope", "key_data"})
+_BOOL_FIELDS = frozenset({"overwrite", "include_secret_key"})
+_INT_FIELDS = frozenset({"iterations", "max_age_seconds"})
+
+_SIZE_LIMITS: dict[str, int] = {
+    "plaintext": _MAX_PLAINTEXT_SIZE,
+    "plaintext_base64": _MAX_PLAINTEXT_SIZE,
+    "message": _MAX_MESSAGE_SIZE,
+    "public_key": _MAX_KEY_FIELD_SIZE,
+    "secret_key": _MAX_KEY_FIELD_SIZE,
+    "classical_public_key": _MAX_KEY_FIELD_SIZE,
+    "pqc_public_key": _MAX_KEY_FIELD_SIZE,
+    "classical_secret_key": _MAX_KEY_FIELD_SIZE,
+    "pqc_secret_key": _MAX_KEY_FIELD_SIZE,
+    "sender_secret_key": _MAX_KEY_FIELD_SIZE,
+    "sender_public_key": _MAX_KEY_FIELD_SIZE,
+    "ciphertext": _MAX_PLAINTEXT_SIZE,
+    "x25519_ephemeral_public_key": _MAX_KEY_FIELD_SIZE,
+    "pqc_ciphertext": _MAX_KEY_FIELD_SIZE,
+    "expected_sender_public_key": _MAX_KEY_FIELD_SIZE,
+    "signature": _MAX_PLAINTEXT_SIZE,
+}
+
+
+def _validate_arguments(arguments: dict[str, Any]) -> None:
+    """Validate argument types and sizes before handler dispatch.
+
+    Raises ValueError on type mismatch or size violation.
+    Unknown fields pass through silently (future-proof).
+    """
+    if not isinstance(arguments, dict):
+        raise ValueError("arguments must be a JSON object")
+
+    for key, value in arguments.items():
+        if value is None:
+            continue  # Optional fields may be absent/null
+
+        if key in _STRING_FIELDS:
+            if not isinstance(value, str):
+                raise ValueError(f"Parameter '{key}' must be a string, got {type(value).__name__}")
+            limit = _SIZE_LIMITS.get(key)
+            if limit is not None and len(value) > limit:
+                raise ValueError(f"Parameter '{key}' exceeds size limit ({limit} chars)")
+        elif key in _DICT_FIELDS:
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"Parameter '{key}' must be a JSON object, got {type(value).__name__}"
+                )
+        elif key in _BOOL_FIELDS:
+            if not isinstance(value, bool):
+                raise ValueError(f"Parameter '{key}' must be a boolean, got {type(value).__name__}")
+        elif key in _INT_FIELDS:
+            # bool is a subclass of int in Python — reject it explicitly
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"Parameter '{key}' must be a number, got {type(value).__name__}")
+
+
 # --- MCP Server ---
 
 server = Server("pqc-mcp-server")
@@ -135,6 +228,12 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    # Pre-dispatch input validation (type checks + size limits)
+    try:
+        _validate_arguments(arguments)
+    except (ValueError, TypeError) as e:
+        return _json_response({"error": str(e)})
+
     if not HAS_LIBOQS:
         return _json_response(
             {
@@ -172,6 +271,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             return _json_response(
                 {"error": "Decryption failed: ciphertext, key, or envelope metadata is invalid"}
             )
+        except (TypeError, AttributeError, KeyError) as e:
+            return _json_response({"error": f"Invalid argument type: {e}"})
+        except RuntimeError as e:
+            return _json_response({"error": f"Internal error: {e}"})
+        except OSError as e:
+            return _json_response({"error": f"I/O error: {e}"})
 
     return _json_response({"error": f"Unknown tool: {name}"})
 
