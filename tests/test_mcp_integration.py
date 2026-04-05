@@ -20,6 +20,8 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 def _server_params() -> StdioServerParameters:
     """Build params to launch the PQC MCP server as a subprocess."""
     env = dict(os.environ)
+    # Use repo-local uv cache to avoid sandbox/permission issues
+    env.setdefault("UV_CACHE_DIR", os.path.join(os.path.dirname(__file__), "..", ".uv-cache"))
     # Ensure liboqs shared library is findable
     home = os.path.expanduser("~")
     extra_paths = f"{home}/.local/lib:/usr/local/lib:/opt/homebrew/lib"

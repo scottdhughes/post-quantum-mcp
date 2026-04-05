@@ -56,7 +56,7 @@ Fetch pending envelopes for a recipient.
       "envelope": { ... }
     }
   ],
-  "next_cursor": "<UUID or null>"
+  "next_cursor": "<opaque string or null>"
 }
 ```
 

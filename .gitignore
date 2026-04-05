@@ -61,3 +61,4 @@ dmypy.json
 .vendor/
 deploy/relay/worker/node_modules/
 deploy/relay/worker/dist/
+.uv-cache/
