@@ -29,6 +29,7 @@ from pqc_mcp_server.hybrid import (
     hybrid_auth_open,
     hybrid_auth_verify,
     _fingerprint_public_key,
+    _fingerprint_words,
 )
 from pqc_mcp_server.security_policy import get_policy
 from pqc_mcp_server.replay_cache import get_replay_cache, signature_digest
@@ -118,6 +119,7 @@ def handle_fingerprint(arguments: dict[str, Any]) -> dict[str, Any]:
     pk_bytes = _b64(arguments["public_key"])
     return {
         "fingerprint": _fingerprint_public_key(pk_bytes),
+        "fingerprint_words": _fingerprint_words(pk_bytes),
         "algorithm": "SHA3-256",
         "public_key_size": len(pk_bytes),
     }
@@ -136,11 +138,13 @@ def handle_hybrid_keygen(arguments: dict[str, Any]) -> dict[str, Any]:
                 "algorithm": result["classical"]["algorithm"],
                 "public_key": result["classical"]["public_key"],
                 "fingerprint": result["classical"]["fingerprint"],
+                "fingerprint_words": result["classical"]["fingerprint_words"],
             },
             "pqc": {
                 "algorithm": result["pqc"]["algorithm"],
                 "public_key": result["pqc"]["public_key"],
                 "fingerprint": result["pqc"]["fingerprint"],
+                "fingerprint_words": result["pqc"]["fingerprint_words"],
             },
         }
     return result
@@ -197,7 +201,11 @@ def handle_hybrid_auth_seal(arguments: dict[str, Any]) -> dict[str, Any]:
     pt_bytes = _resolve_plaintext(arguments)
     classical_pk, pqc_pk = _resolve_hybrid_public(arguments, prefix="recipient_")
     sender_sk, sender_pk = _resolve_sender(arguments)
-    envelope = hybrid_auth_seal(pt_bytes, classical_pk, pqc_pk, sender_sk, sender_pk)
+    kwargs: dict[str, Any] = {}
+    mdt = arguments.get("max_decrypt_time")
+    if mdt is not None:
+        kwargs["max_decrypt_time"] = int(mdt)
+    envelope = hybrid_auth_seal(pt_bytes, classical_pk, pqc_pk, sender_sk, sender_pk, **kwargs)
     return {"envelope": envelope}
 
 

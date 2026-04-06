@@ -437,3 +437,132 @@ def handle_benchmark(arguments: dict[str, Any]) -> dict[str, Any]:
         },
         "nist_level": details.get("claimed_nist_level", "Unknown"),
     }
+
+
+# Classical counterpart mapping for comparison tool
+_CLASSICAL_COUNTERPARTS: dict[str, str] = {
+    "ML-KEM-768": "X25519",
+    "ML-KEM-512": "X25519",
+    "ML-KEM-1024": "X25519",
+    "ML-DSA-44": "Ed25519",
+    "ML-DSA-65": "Ed25519",
+    "ML-DSA-87": "Ed25519",
+}
+
+
+def _benchmark_classical(algorithm: str, iterations: int) -> dict[str, Any]:
+    """Benchmark a classical algorithm (X25519 or Ed25519)."""
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    test_message = b"Benchmark test message for classical operations"
+
+    if algorithm == "X25519":
+        # Keygen
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            sk = X25519PrivateKey.generate()
+            sk.public_key()
+        keygen_ms = (time.perf_counter() - t0) / iterations * 1000
+
+        # Key exchange
+        sk1 = X25519PrivateKey.generate()
+        pk2 = X25519PrivateKey.generate().public_key()
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            sk1.exchange(pk2)
+        exchange_ms = (time.perf_counter() - t0) / iterations * 1000
+
+        return {
+            "algorithm": "X25519",
+            "type": "Key Exchange",
+            "iterations": iterations,
+            "timing_ms": {"keygen": round(keygen_ms, 3), "exchange": round(exchange_ms, 3)},
+            "sizes_bytes": {"public_key": 32, "secret_key": 32, "shared_secret": 32},
+        }
+
+    elif algorithm == "Ed25519":
+        # Keygen
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            sk = Ed25519PrivateKey.generate()
+            sk.public_key()
+        keygen_ms = (time.perf_counter() - t0) / iterations * 1000
+
+        # Sign
+        sk = Ed25519PrivateKey.generate()
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            sig = sk.sign(test_message)
+        sign_ms = (time.perf_counter() - t0) / iterations * 1000
+
+        # Verify
+        pk = sk.public_key()
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            pk.verify(sig, test_message)
+        verify_ms = (time.perf_counter() - t0) / iterations * 1000
+
+        return {
+            "algorithm": "Ed25519",
+            "type": "Signature",
+            "iterations": iterations,
+            "timing_ms": {
+                "keygen": round(keygen_ms, 3),
+                "sign": round(sign_ms, 3),
+                "verify": round(verify_ms, 3),
+            },
+            "sizes_bytes": {"public_key": 32, "secret_key": 32, "signature": 64},
+        }
+
+    raise ValueError(f"Unknown classical algorithm: {algorithm}")
+
+
+def handle_compare(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Compare a PQC algorithm against its classical counterpart."""
+    alg = arguments["algorithm"]
+    iterations = min(arguments.get("iterations", 10), 100)
+
+    classical_name = _CLASSICAL_COUNTERPARTS.get(alg)
+    if not classical_name:
+        supported = ", ".join(sorted(_CLASSICAL_COUNTERPARTS.keys()))
+        raise ValueError(f"No classical counterpart for '{alg}'. Supported: {supported}")
+
+    pqc_result = handle_benchmark({"algorithm": alg, "iterations": iterations})
+    classical_result = _benchmark_classical(classical_name, iterations)
+
+    # Compute ratios
+    ratios: dict[str, str] = {}
+    ratios["keygen"] = (
+        f"{pqc_result['timing_ms']['keygen'] / max(classical_result['timing_ms']['keygen'], 0.001):.1f}x"
+    )
+
+    if pqc_result["type"] == "KEM":
+        classical_op = classical_result["timing_ms"]["exchange"]
+        pqc_op = pqc_result["timing_ms"]["encap"]
+        ratios["encap_vs_exchange"] = f"{pqc_op / max(classical_op, 0.001):.1f}x"
+        pk_ratio = (
+            pqc_result["sizes_bytes"]["public_key"] / classical_result["sizes_bytes"]["public_key"]
+        )
+        ratios["public_key_size"] = f"{pk_ratio:.0f}x"
+    else:
+        classical_sign = classical_result["timing_ms"]["sign"]
+        pqc_sign = pqc_result["timing_ms"]["sign"]
+        ratios["sign"] = f"{pqc_sign / max(classical_sign, 0.001):.1f}x"
+        classical_verify = classical_result["timing_ms"]["verify"]
+        pqc_verify = pqc_result["timing_ms"]["verify"]
+        ratios["verify"] = f"{pqc_verify / max(classical_verify, 0.001):.1f}x"
+        sig_ratio = (
+            pqc_result["sizes_bytes"]["signature"] / classical_result["sizes_bytes"]["signature"]
+        )
+        ratios["signature_size"] = f"{sig_ratio:.0f}x"
+
+    return {
+        "pqc": pqc_result,
+        "classical": classical_result,
+        "ratios": ratios,
+        "summary": (
+            f"{alg} vs {classical_name}: PQC keygen is {ratios['keygen']} slower. "
+            f"PQC provides NIST Level {pqc_result.get('nist_level', '?')} quantum resistance."
+        ),
+    }

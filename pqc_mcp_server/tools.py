@@ -370,6 +370,15 @@ PQC_TOOLS: list[Tool] = [
                     "type": "string",
                     "description": "Name of stored signing keypair for sender",
                 },
+                "max_decrypt_time": {
+                    "type": "integer",
+                    "description": (
+                        "Sender-imposed TTL in seconds. If set, the recipient "
+                        "cannot decrypt after timestamp + max_decrypt_time. "
+                        "This is sender-controlled (unlike max_age_seconds "
+                        "which is recipient-controlled). Signed in transcript."
+                    ),
+                },
             },
         },
     ),
@@ -511,6 +520,29 @@ PQC_TOOLS: list[Tool] = [
                 "algorithm": {
                     "type": "string",
                     "description": "Algorithm name (e.g., 'ML-KEM-768', 'ML-DSA-65')",
+                },
+                "iterations": {
+                    "type": "integer",
+                    "description": "Number of iterations to average (default 10, max 100)",
+                    "default": 10,
+                },
+            },
+            "required": ["algorithm"],
+        },
+    ),
+    Tool(
+        name="pqc_compare",
+        description=(
+            "Compare a PQC algorithm against its classical counterpart."
+            " Side-by-side latency, key sizes, and performance ratios."
+            " Supports ML-KEM vs X25519 and ML-DSA vs Ed25519."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "algorithm": {
+                    "type": "string",
+                    "description": ("PQC algorithm name (e.g., 'ML-KEM-768', 'ML-DSA-65')"),
                 },
                 "iterations": {
                     "type": "integer",

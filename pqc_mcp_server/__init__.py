@@ -66,6 +66,7 @@ if HAS_LIBOQS:
         handle_hash,
         handle_security_analysis,
         handle_benchmark,
+        handle_compare,
     )
 
     _PQC_HANDLERS = {
@@ -80,6 +81,7 @@ if HAS_LIBOQS:
         "pqc_hash_to_curve": handle_hash,  # deprecated alias
         "pqc_security_analysis": handle_security_analysis,
         "pqc_benchmark": handle_benchmark,
+        "pqc_compare": handle_compare,
     }
 
 if HAS_HYBRID:
@@ -157,7 +159,7 @@ _STRING_FIELDS = frozenset(
 )
 _DICT_FIELDS = frozenset({"envelope", "key_data"})
 _BOOL_FIELDS = frozenset({"overwrite", "include_secret_key"})
-_INT_FIELDS = frozenset({"iterations", "max_age_seconds"})
+_INT_FIELDS = frozenset({"iterations", "max_age_seconds", "max_decrypt_time"})
 
 _SIZE_LIMITS: dict[str, int] = {
     "plaintext": _MAX_PLAINTEXT_SIZE,

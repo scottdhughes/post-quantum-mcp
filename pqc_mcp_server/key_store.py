@@ -102,6 +102,7 @@ _ALLOWED_TOP_KEYS = frozenset(
         "public_key_size",
         "secret_key",
         "fingerprint",
+        "fingerprint_words",
         "classical",
         "pqc",
     }
@@ -114,6 +115,7 @@ _ALLOWED_SUB_KEYS = frozenset(
         "public_key_size",
         "secret_key",
         "fingerprint",
+        "fingerprint_words",
     }
 )
 
