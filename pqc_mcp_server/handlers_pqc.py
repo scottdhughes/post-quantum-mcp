@@ -461,16 +461,16 @@ def _benchmark_classical(algorithm: str, iterations: int) -> dict[str, Any]:
         # Keygen
         t0 = time.perf_counter()
         for _ in range(iterations):
-            sk = X25519PrivateKey.generate()
-            sk.public_key()
+            x_sk = X25519PrivateKey.generate()
+            x_sk.public_key()
         keygen_ms = (time.perf_counter() - t0) / iterations * 1000
 
         # Key exchange
-        sk1 = X25519PrivateKey.generate()
-        pk2 = X25519PrivateKey.generate().public_key()
+        x_sk1 = X25519PrivateKey.generate()
+        x_pk2 = X25519PrivateKey.generate().public_key()
         t0 = time.perf_counter()
         for _ in range(iterations):
-            sk1.exchange(pk2)
+            x_sk1.exchange(x_pk2)
         exchange_ms = (time.perf_counter() - t0) / iterations * 1000
 
         return {
@@ -485,22 +485,22 @@ def _benchmark_classical(algorithm: str, iterations: int) -> dict[str, Any]:
         # Keygen
         t0 = time.perf_counter()
         for _ in range(iterations):
-            sk = Ed25519PrivateKey.generate()
-            sk.public_key()
+            ed_sk = Ed25519PrivateKey.generate()
+            ed_sk.public_key()
         keygen_ms = (time.perf_counter() - t0) / iterations * 1000
 
         # Sign
-        sk = Ed25519PrivateKey.generate()
+        ed_sk = Ed25519PrivateKey.generate()
         t0 = time.perf_counter()
         for _ in range(iterations):
-            sig = sk.sign(test_message)
+            ed_sig = ed_sk.sign(test_message)
         sign_ms = (time.perf_counter() - t0) / iterations * 1000
 
         # Verify
-        pk = sk.public_key()
+        ed_pk = ed_sk.public_key()
         t0 = time.perf_counter()
         for _ in range(iterations):
-            pk.verify(sig, test_message)
+            ed_pk.verify(ed_sig, test_message)
         verify_ms = (time.perf_counter() - t0) / iterations * 1000
 
         return {
