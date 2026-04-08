@@ -183,6 +183,19 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // Route: DELETE /mailboxes/:fp/:id
   const deleteMatch = path.match(/^\/mailboxes\/([0-9a-f]{64})\/([a-f0-9-]{36})$/);
   if (deleteMatch && method === "DELETE") {
+    // Rate limit DELETE (prevents token-holder abuse)
+    if (!trusted) {
+      try {
+        const delLimit = parseInt(env.RATE_LIMIT_GET_PER_MIN || "120");
+        const result = await checkRateLimit(env.MAILBOX, `del:${clientIp}`, delLimit);
+        if (!result.allowed) {
+          logRateLimitEvent("blocked", clientIp, method, path, result);
+          return errorResponse("rate_limited", "Too many requests. Try again later.", 429);
+        }
+      } catch {
+        console.log(JSON.stringify({ event: "rate_limit_error", ip: clientIp, method, path }));
+      }
+    }
     // Mailbox token auth: if mailbox has a token_hash, require valid token
     const delMeta = await getMailboxMeta(env.MAILBOX, deleteMatch[1]);
     if (delMeta.token_hash) {
