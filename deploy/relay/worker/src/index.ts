@@ -318,8 +318,14 @@ async function handlePost(request: Request, env: Env, recipientFp: string): Prom
     }
   }
 
-  // Check mailbox capacity
-  if (meta.message_count >= maxMessages) {
+  // Check mailbox capacity using live KV state (not cached meta.message_count).
+  // Messages expire via TTL but the meta counter doesn't auto-decrement,
+  // so stale counts could falsely block deposits on empty mailboxes.
+  const capacityCheck = await env.MAILBOX.list({
+    prefix: `mailbox:${recipientFp}:msg:`,
+    limit: Math.min(maxMessages, 1000),
+  });
+  if (capacityCheck.keys.length >= maxMessages) {
     return errorResponse("mailbox_full", `Mailbox has ${maxMessages} messages (limit reached)`, 429);
   }
 
@@ -341,8 +347,8 @@ async function handlePost(request: Request, env: Env, recipientFp: string): Prom
       { expirationTtl: ttl }
     );
 
-    // Update count (best-effort — race under concurrency is OK)
-    meta.message_count += 1;
+    // Update count (best-effort, informational — capacity check uses live KV list)
+    meta.message_count = capacityCheck.keys.length + 1;
     await setMailboxMeta(env.MAILBOX, recipientFp, meta);
   } catch (err) {
     console.log(JSON.stringify({ event: "kv_error", op: "put", error: String(err) }));
