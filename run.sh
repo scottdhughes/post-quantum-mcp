@@ -1,9 +1,12 @@
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Prefer project-local liboqs (.vendor/liboqs-0.14) for version alignment.
+# Prefer project-local liboqs (.vendor/liboqs-0.15) for version alignment.
 # Falls back to ~/.local/lib and /usr/local/lib if vendor dir not present.
-VENDOR_LIB="${SCRIPT_DIR}/.vendor/liboqs-0.14/lib"
+# Note: liboqs-python 0.14.1 emits a cosmetic UserWarning on load against
+# liboqs 0.15.x — this is documented and accepted upstream until liboqs-python
+# ships a 0.15.x binding.
+VENDOR_LIB="${SCRIPT_DIR}/.vendor/liboqs-0.15/lib"
 if [ "$(uname)" = "Darwin" ]; then
     if [ -d "$VENDOR_LIB" ]; then
         export DYLD_LIBRARY_PATH="${VENDOR_LIB}:${DYLD_LIBRARY_PATH}"
