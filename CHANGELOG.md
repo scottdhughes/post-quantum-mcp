@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-04-11
+
+### Fixed
+- `run.sh` vendor path: `.vendor/liboqs-0.14/lib` → `.vendor/liboqs-0.15/lib`.
+  The v0.9.1 install-liboqs.sh and README badge bumped to liboqs 0.15.0 but
+  run.sh still pointed at 0.14. Fresh contributors following install-liboqs.sh
+  would build 0.15 to a path run.sh never checked.
+- `tests/test_mcp_integration.py` bootstrap: aligned vendor path and
+  OQS_INSTALL_PATH with the 0.15 runtime.
+
+### Changed
+- `pyproject.toml` version reconciled with git tags (was 0.8.0, now 0.9.2).
+
+## [0.9.1] - 2026-04-11
+
+### Fixed
+- Mailbox capacity check uses live KV state, not cached count.
+- Stdio integration test transport bootstrap (305/305 tests now pass).
+- `scripts/install-liboqs.sh` default bumped from 0.14.0 to 0.15.0 to match
+  CI and README tested pairing. Version skew with liboqs-python 0.14.1 is
+  documented and accepted (cosmetic `UserWarning`).
+- Relay DELETE endpoint rate limiting (uses same limit as GET).
+
 ## [0.8.0] - 2026-04-04
 
 ### Added

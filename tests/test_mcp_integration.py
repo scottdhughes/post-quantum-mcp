@@ -25,12 +25,12 @@ def _server_params() -> StdioServerParameters:
     env.setdefault("UV_CACHE_DIR", os.path.join(repo_root, ".uv-cache"))
     # Ensure liboqs shared library is findable — prefer vendored path
     # (matches run.sh) before falling back to system locations
-    vendored_lib = os.path.join(repo_root, ".vendor", "liboqs-0.14", "lib")
+    vendored_lib = os.path.join(repo_root, ".vendor", "liboqs-0.15", "lib")
     home = os.path.expanduser("~")
     extra_paths = f"{vendored_lib}:{home}/.local/lib:/usr/local/lib:/opt/homebrew/lib"
     env["DYLD_LIBRARY_PATH"] = extra_paths + ":" + env.get("DYLD_LIBRARY_PATH", "")
     env["LD_LIBRARY_PATH"] = extra_paths + ":" + env.get("LD_LIBRARY_PATH", "")
-    env.setdefault("OQS_INSTALL_PATH", os.path.join(repo_root, ".vendor", "liboqs-0.14"))
+    env.setdefault("OQS_INSTALL_PATH", os.path.join(repo_root, ".vendor", "liboqs-0.15"))
 
     # Prefer direct venv python if available (avoids uv bootstrap fragility),
     # fall back to uv run for CI environments
