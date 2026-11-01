@@ -10,6 +10,8 @@ import hashlib
 import json as _json
 from typing import Any
 
+from pqc_mcp_server.security_policy import validate_key_name
+
 _MAX_KEY_DATA_SIZE = 102_400  # 100 KB
 
 # Module-level store (lives for the server's lifetime)
@@ -23,6 +25,7 @@ def _fingerprint(public_key_b64: str) -> str:
 
 def store_from_keygen(name: str, key_data: dict[str, Any], overwrite: bool = False) -> None:
     """Store keygen output as a handle. Fails on collision unless overwrite=True."""
+    validate_key_name(name)
     if name in _STORE and not overwrite:
         raise ValueError(f"Key '{name}' already exists in store. Pass overwrite: true to replace.")
 
@@ -166,7 +169,7 @@ def _reject_secret_fields(key_data: dict[str, Any]) -> None:
 
 def handle_key_store_save(arguments: dict[str, Any]) -> dict[str, Any]:
     """Save a keygen output by name."""
-    name = arguments["name"]
+    name = validate_key_name(arguments["name"])
     key_data = arguments["key_data"]
 
     if not isinstance(key_data, dict):
@@ -207,7 +210,7 @@ def handle_key_store_save(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_key_store_load(arguments: dict[str, Any]) -> dict[str, Any]:
     """Load a stored key by name. Handle entries return public material only."""
-    name = arguments["name"]
+    name = validate_key_name(arguments["name"])
     entry = _STORE.get(name)
     if entry is None:
         return {"error": f"Key '{name}' not found in store"}
@@ -264,7 +267,7 @@ def handle_key_store_list(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_key_store_delete(arguments: dict[str, Any]) -> dict[str, Any]:
     """Delete a stored key by name."""
-    name = arguments["name"]
+    name = validate_key_name(arguments["name"])
     if name not in _STORE:
         return {"error": f"Key '{name}' not found in store"}
     del _STORE[name]

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - Unreleased
+
+### Security
+- Enforce validated, bounded key handles before both generic and hybrid key generation; missing/null/empty handles cannot return private keys in handle-only mode.
+- Replace default replay JSON persistence with transactional SQLite across local processes. Persistence/corruption/capacity errors fail closed; retain live entries through the freshness window plus clock skew. Import valid legacy JSON once.
+- Persist mailbox credentials independently of message expiration in SQLite-backed Durable Objects. Unknown mailboxes fail closed; registration and token rotation are operator-authenticated.
+- Remove the deployable development admin token and reject placeholder/missing admin configuration.
+- Canonicalize relay origins, refuse redirects, scope credentials to origin/mailbox, bound streamed requests/responses, and suppress credential-reflecting error bodies.
+
+### Changed
+- **Relay v0.2 breaking operational change:** registration and mailbox bearer credentials are required; legacy KV data is retained but not silently imported. Follow RELAY-SPEC.md migration before deployment.
+- Transactional mailbox quotas, TTL cleanup, retry receipts and per-IP fixed-window rate limiting replace best-effort KV state. Limiter failures fail closed.
+- Python relay credentials load from an owner-only configuration file, outside tool arguments; network requests run outside the MCP event loop.
+- Align local plaintext byte limits with ciphertext/base64 expansion, reject malformed generic native-key inputs, and close/cleanse native oqs resources.
+- Correct security-category/standardization descriptions, unsupported-hash behavior, and authenticated legacy warnings. Sender TTL is API policy, not cryptographic self-destruction.
+- Update liboqs C to 0.16.0, liboqs-python to 0.16.0.2, cryptography to 50.0.2, and MCP to maintained 1.30.0; refresh frozen Python/Node locks.
+- Node 24+ relay toolchain; maintained Cloudflare Vitest plugin, Vitest 5, and Wrangler 4.156.
+
+### Testing
+- Repair global module contamination; isolate replay state from operator data.
+- Require Hypothesis in dev dependencies; separate external integration from default pytest runs.
+- Add SQLite-backed local contract tests, actual workerd authorization/concurrency tests, and explicit disposable-endpoint Python transport/crypto integration.
+- Restore formatting/type checks and add frozen-install, package build/install, and dependency audit checks.
+
 ## [0.9.2] - 2026-04-11
 
 ### Fixed

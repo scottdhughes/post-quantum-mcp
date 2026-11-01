@@ -62,3 +62,8 @@ dmypy.json
 deploy/relay/worker/node_modules/
 deploy/relay/worker/dist/
 .uv-cache/
+
+# Local verification state
+.tmp/
+.wrangler/
+.ruff_cache/

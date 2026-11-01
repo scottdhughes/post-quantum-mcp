@@ -25,12 +25,12 @@ def _server_params() -> StdioServerParameters:
     env.setdefault("UV_CACHE_DIR", os.path.join(repo_root, ".uv-cache"))
     # Ensure liboqs shared library is findable — prefer vendored path
     # (matches run.sh) before falling back to system locations
-    vendored_lib = os.path.join(repo_root, ".vendor", "liboqs-0.15", "lib")
+    vendored_lib = os.path.join(repo_root, ".vendor", "liboqs-0.16", "lib")
     home = os.path.expanduser("~")
     extra_paths = f"{vendored_lib}:{home}/.local/lib:/usr/local/lib:/opt/homebrew/lib"
     env["DYLD_LIBRARY_PATH"] = extra_paths + ":" + env.get("DYLD_LIBRARY_PATH", "")
     env["LD_LIBRARY_PATH"] = extra_paths + ":" + env.get("LD_LIBRARY_PATH", "")
-    env.setdefault("OQS_INSTALL_PATH", os.path.join(repo_root, ".vendor", "liboqs-0.15"))
+    env.setdefault("OQS_INSTALL_PATH", os.path.join(repo_root, ".vendor", "liboqs-0.16"))
 
     # Prefer direct venv python if available (avoids uv bootstrap fragility),
     # fall back to uv run for CI environments
@@ -192,3 +192,14 @@ async def test_malformed_base64_rejection_over_stdio():
             )
             assert "error" in result
             assert "Invalid base64" in result["error"]
+
+
+def test_crypto_backend_import_never_writes_to_protocol_stdout():
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import pqc_mcp_server"], capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 0
+    assert result.stdout == ""

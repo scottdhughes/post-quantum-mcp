@@ -21,6 +21,18 @@ def _b64(value: str | bytes) -> bytes:
     return base64.b64decode(value, validate=True)
 
 
+def _require_length(value: bytes, expected: int, label: str) -> None:
+    if len(value) != expected:
+        raise ValueError(f"{label} must be exactly {expected} bytes")
+
+
+def _iterations(arguments: dict[str, Any]) -> int:
+    value = arguments.get("iterations", 10)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("iterations must be a positive integer")
+    return min(value, 100)
+
+
 def handle_list_algorithms(arguments: dict[str, Any]) -> dict[str, Any]:
     filter_type = arguments.get("type", "all")
     result: dict[str, Any] = {
@@ -37,7 +49,7 @@ def handle_list_algorithms(arguments: dict[str, Any]) -> dict[str, Any]:
         "ML-KEM": "FIPS 203 (formerly CRYSTALS-Kyber)",
         "ML-DSA": "FIPS 204 (formerly CRYSTALS-Dilithium)",
         "SLH-DSA": "FIPS 205 (formerly SPHINCS+)",
-        "HQC": "Round 4 finalist, standardization in progress",
+        "HQC": "Selected for standardization; not a final FIPS claim",
     }
     return result
 
@@ -46,31 +58,31 @@ def handle_algorithm_info(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
 
     try:
-        kem = oqs.KeyEncapsulation(alg)
-        return {
-            "name": alg,
-            "type": "KEM (Key Encapsulation Mechanism)",
-            "public_key_size": kem.details["length_public_key"],
-            "secret_key_size": kem.details["length_secret_key"],
-            "ciphertext_size": kem.details["length_ciphertext"],
-            "shared_secret_size": kem.details["length_shared_secret"],
-            "nist_level": kem.details.get("claimed_nist_level", "Unknown"),
-            "is_ind_cca": kem.details.get("is_ind_cca", True),
-        }
+        with oqs.KeyEncapsulation(alg) as kem:
+            return {
+                "name": alg,
+                "type": "KEM (Key Encapsulation Mechanism)",
+                "public_key_size": kem.details["length_public_key"],
+                "secret_key_size": kem.details["length_secret_key"],
+                "ciphertext_size": kem.details["length_ciphertext"],
+                "shared_secret_size": kem.details["length_shared_secret"],
+                "nist_level": kem.details.get("claimed_nist_level", "Unknown"),
+                "is_ind_cca": kem.details.get("is_ind_cca", True),
+            }
     except MechanismNotSupportedError:
         pass
 
     try:
-        sig = oqs.Signature(alg)
-        return {
-            "name": alg,
-            "type": "Digital Signature",
-            "public_key_size": sig.details["length_public_key"],
-            "secret_key_size": sig.details["length_secret_key"],
-            "signature_size": sig.details["length_signature"],
-            "nist_level": sig.details.get("claimed_nist_level", "Unknown"),
-            "is_euf_cma": sig.details.get("is_euf_cma", True),
-        }
+        with oqs.Signature(alg) as sig:
+            return {
+                "name": alg,
+                "type": "Digital Signature",
+                "public_key_size": sig.details["length_public_key"],
+                "secret_key_size": sig.details["length_secret_key"],
+                "signature_size": sig.details["length_signature"],
+                "nist_level": sig.details.get("claimed_nist_level", "Unknown"),
+                "is_euf_cma": sig.details.get("is_euf_cma", True),
+            }
     except MechanismNotSupportedError:
         pass
 
@@ -80,39 +92,33 @@ def handle_algorithm_info(arguments: dict[str, Any]) -> dict[str, Any]:
 def handle_generate_keypair(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
 
-    # When handle-only mode is enforced, require store_as
-    if get_policy().require_key_handles and "store_as" not in arguments:
-        raise ValueError(
-            "PQC_REQUIRE_KEY_HANDLES is enabled. Use store_as to generate "
-            "keys as opaque handles instead of receiving raw secret keys."
-        )
+    store_name = get_policy().keygen_handle(arguments)
 
     try:
-        kem = oqs.KeyEncapsulation(alg)
-        public_key = kem.generate_keypair()
-        secret_key = kem.export_secret_key()
-        result: dict[str, Any] = {
-            "algorithm": alg,
-            "type": "KEM",
-            "public_key": base64.b64encode(public_key).decode(),
-            "secret_key": base64.b64encode(secret_key).decode(),
-            "public_key_size": len(public_key),
-            "secret_key_size": len(secret_key),
-        }
+        with oqs.KeyEncapsulation(alg) as kem:
+            public_key = kem.generate_keypair()
+            secret_key = kem.export_secret_key()
+            result: dict[str, Any] = {
+                "algorithm": alg,
+                "type": "KEM",
+                "public_key": base64.b64encode(public_key).decode(),
+                "secret_key": base64.b64encode(secret_key).decode(),
+                "public_key_size": len(public_key),
+                "secret_key_size": len(secret_key),
+            }
     except MechanismNotSupportedError:
-        sig = oqs.Signature(alg)
-        public_key = sig.generate_keypair()
-        secret_key = sig.export_secret_key()
-        result = {
-            "algorithm": alg,
-            "type": "Signature",
-            "public_key": base64.b64encode(public_key).decode(),
-            "secret_key": base64.b64encode(secret_key).decode(),
-            "public_key_size": len(public_key),
-            "secret_key_size": len(secret_key),
-        }
+        with oqs.Signature(alg) as sig:
+            public_key = sig.generate_keypair()
+            secret_key = sig.export_secret_key()
+            result = {
+                "algorithm": alg,
+                "type": "Signature",
+                "public_key": base64.b64encode(public_key).decode(),
+                "secret_key": base64.b64encode(secret_key).decode(),
+                "public_key_size": len(public_key),
+                "secret_key_size": len(secret_key),
+            }
 
-    store_name = arguments.get("store_as")
     if store_name:
         from pqc_mcp_server.key_store import store_from_keygen
 
@@ -181,25 +187,25 @@ def _resolve_flat_key(
             # Try liboqs canonical comparison
             try:
                 if expected_type == "kem":
-                    k1 = oqs.KeyEncapsulation(stored_alg)
-                    k2 = oqs.KeyEncapsulation(requested_alg)
-                    if k1.details["name"] != k2.details["name"]:
-                        msg = (
-                            f"Algorithm mismatch: requested"
-                            f" '{requested_alg}' but key"
-                            f" '{name}' is '{stored_alg}'"
-                        )
-                        raise ValueError(msg)
+                    with oqs.KeyEncapsulation(stored_alg) as k1:
+                        with oqs.KeyEncapsulation(requested_alg) as k2:
+                            if k1.details["name"] != k2.details["name"]:
+                                msg = (
+                                    f"Algorithm mismatch: requested"
+                                    f" '{requested_alg}' but key"
+                                    f" '{name}' is '{stored_alg}'"
+                                )
+                                raise ValueError(msg)
                 else:
-                    s1 = oqs.Signature(stored_alg)
-                    s2 = oqs.Signature(requested_alg)
-                    if s1.details["name"] != s2.details["name"]:
-                        msg = (
-                            f"Algorithm mismatch: requested"
-                            f" '{requested_alg}' but key"
-                            f" '{name}' is '{stored_alg}'"
-                        )
-                        raise ValueError(msg)
+                    with oqs.Signature(stored_alg) as s1:
+                        with oqs.Signature(requested_alg) as s2:
+                            if s1.details["name"] != s2.details["name"]:
+                                msg = (
+                                    f"Algorithm mismatch: requested"
+                                    f" '{requested_alg}' but key"
+                                    f" '{name}' is '{stored_alg}'"
+                                )
+                                raise ValueError(msg)
             except ValueError:
                 raise
             except Exception:
@@ -217,15 +223,16 @@ def handle_encapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
     resolved_pk = _resolve_flat_key(arguments, "public_key", "kem")
     public_key = resolved_pk if resolved_pk is not None else _b64(arguments["public_key"])
-    kem = oqs.KeyEncapsulation(alg)
-    ciphertext, shared_secret = kem.encap_secret(public_key)
-    return {
-        "algorithm": alg,
-        "ciphertext": base64.b64encode(ciphertext).decode(),
-        "shared_secret": base64.b64encode(shared_secret).decode(),
-        "shared_secret_hex": shared_secret.hex(),
-        "ciphertext_size": len(ciphertext),
-    }
+    with oqs.KeyEncapsulation(alg) as kem:
+        _require_length(public_key, kem.details["length_public_key"], "public_key")
+        ciphertext, shared_secret = kem.encap_secret(public_key)
+        return {
+            "algorithm": alg,
+            "ciphertext": base64.b64encode(ciphertext).decode(),
+            "shared_secret": base64.b64encode(shared_secret).decode(),
+            "shared_secret_hex": shared_secret.hex(),
+            "ciphertext_size": len(ciphertext),
+        }
 
 
 def handle_decapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -234,13 +241,15 @@ def handle_decapsulate(arguments: dict[str, Any]) -> dict[str, Any]:
     resolved_sk = _resolve_flat_key(arguments, "secret_key", "kem")
     secret_key = resolved_sk if resolved_sk is not None else _b64(arguments["secret_key"])
     ciphertext = _b64(arguments["ciphertext"])
-    kem = oqs.KeyEncapsulation(alg, secret_key)
-    shared_secret = kem.decap_secret(ciphertext)
-    return {
-        "algorithm": alg,
-        "shared_secret": base64.b64encode(shared_secret).decode(),
-        "shared_secret_hex": shared_secret.hex(),
-    }
+    with oqs.KeyEncapsulation(alg, secret_key) as kem:
+        _require_length(secret_key, kem.details["length_secret_key"], "secret_key")
+        _require_length(ciphertext, kem.details["length_ciphertext"], "ciphertext")
+        shared_secret = kem.decap_secret(ciphertext)
+        return {
+            "algorithm": alg,
+            "shared_secret": base64.b64encode(shared_secret).decode(),
+            "shared_secret_hex": shared_secret.hex(),
+        }
 
 
 def handle_sign(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -249,14 +258,15 @@ def handle_sign(arguments: dict[str, Any]) -> dict[str, Any]:
     resolved_sk = _resolve_flat_key(arguments, "secret_key", "signature")
     secret_key = resolved_sk if resolved_sk is not None else _b64(arguments["secret_key"])
     message = arguments["message"].encode("utf-8")
-    sig = oqs.Signature(alg, secret_key)
-    signature = sig.sign(message)
-    return {
-        "algorithm": alg,
-        "message_hash": hashlib.sha3_256(message).hexdigest(),
-        "signature": base64.b64encode(signature).decode(),
-        "signature_size": len(signature),
-    }
+    with oqs.Signature(alg, secret_key) as sig:
+        _require_length(secret_key, sig.details["length_secret_key"], "secret_key")
+        signature = sig.sign(message)
+        return {
+            "algorithm": alg,
+            "message_hash": hashlib.sha3_256(message).hexdigest(),
+            "signature": base64.b64encode(signature).decode(),
+            "signature_size": len(signature),
+        }
 
 
 def handle_verify(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -265,13 +275,16 @@ def handle_verify(arguments: dict[str, Any]) -> dict[str, Any]:
     public_key = resolved_pk if resolved_pk is not None else _b64(arguments["public_key"])
     message = arguments["message"].encode("utf-8")
     signature = _b64(arguments["signature"])
-    sig = oqs.Signature(alg)
-    is_valid = sig.verify(message, signature, public_key)
-    return {
-        "algorithm": alg,
-        "valid": is_valid,
-        "message_hash": hashlib.sha3_256(message).hexdigest(),
-    }
+    with oqs.Signature(alg) as sig:
+        _require_length(public_key, sig.details["length_public_key"], "public_key")
+        if len(signature) > sig.details["length_signature"]:
+            raise ValueError("signature exceeds algorithm byte length")
+        is_valid = sig.verify(message, signature, public_key)
+        return {
+            "algorithm": alg,
+            "valid": is_valid,
+            "message_hash": hashlib.sha3_256(message).hexdigest(),
+        }
 
 
 def handle_hash(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -287,7 +300,7 @@ def handle_hash(arguments: dict[str, Any]) -> dict[str, Any]:
     elif alg == "SHAKE256":
         digest = hashlib.shake_256(message).digest(64)
     else:
-        digest = hashlib.sha3_256(message).digest()
+        raise ValueError(f"Unsupported hash algorithm: {alg}")
 
     return {
         "algorithm": alg,
@@ -302,25 +315,25 @@ def handle_security_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
     alg = arguments["algorithm"]
 
     security_levels = {
-        1: {"classical": "AES-128", "quantum": "AES-64 equivalent", "bits": 128},
-        2: {"classical": "SHA-256", "quantum": "AES-80 equivalent", "bits": 192},
-        3: {"classical": "AES-192", "quantum": "AES-96 equivalent", "bits": 192},
-        4: {"classical": "SHA-384", "quantum": "AES-112 equivalent", "bits": 256},
-        5: {"classical": "AES-256", "quantum": "AES-128 equivalent", "bits": 256},
+        1: {"classical": "AES-128 key search", "bits": 128},
+        2: {"classical": "SHA-256 collision search", "bits": 128},
+        3: {"classical": "AES-192 key search", "bits": 192},
+        4: {"classical": "SHA-384 collision search", "bits": 192},
+        5: {"classical": "AES-256 key search", "bits": 256},
     }
 
     nist_level = None
     alg_type = None
 
     try:
-        kem = oqs.KeyEncapsulation(alg)
-        nist_level = kem.details.get("claimed_nist_level", 3)
-        alg_type = "KEM"
+        with oqs.KeyEncapsulation(alg) as kem:
+            nist_level = kem.details.get("claimed_nist_level", 3)
+            alg_type = "KEM"
     except MechanismNotSupportedError:
         try:
-            sig = oqs.Signature(alg)
-            nist_level = sig.details.get("claimed_nist_level", 3)
-            alg_type = "Signature"
+            with oqs.Signature(alg) as sig:
+                nist_level = sig.details.get("claimed_nist_level", 3)
+                alg_type = "Signature"
         except MechanismNotSupportedError:
             return {"error": f"Unknown algorithm: {alg}"}
 
@@ -332,13 +345,22 @@ def handle_security_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
         "type": alg_type,
         "nist_security_level": nist_level,
         "classical_security": level_info["classical"],
-        "quantum_security": level_info["quantum"],
+        "quantum_security": "Claimed NIST category; not a per-algorithm quantum cost estimate",
+        "standardization_status": (
+            "FIPS 203"
+            if alg.startswith("ML-KEM-")
+            else (
+                "FIPS 204"
+                if alg.startswith("ML-DSA-")
+                else "FIPS 205" if alg.startswith("SLH-DSA-") else "Not established by this tool"
+            )
+        ),
         "security_bits": bits,
         "quantum_resistant": True,
-        "grover_resistance": f"Grover's algorithm reduces security by ~50% to {bits // 2} bits",
+        "grover_resistance": "Generic search speedups do not determine this algorithm's quantum security",
         "shor_resistance": "Resistant to Shor's algorithm (not based on factoring/DLP)",
         "recommendation": (
-            "NIST approved for post-quantum security" if nist_level else "Experimental"
+            "Use standardized parameter sets; claimed categories are not implementation certification"
         ),
     }
 
@@ -346,97 +368,97 @@ def handle_security_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
 def handle_benchmark(arguments: dict[str, Any]) -> dict[str, Any]:
     """Benchmark a PQC algorithm: timed keygen, operations, and sizes."""
     alg = arguments["algorithm"]
-    iterations = min(arguments.get("iterations", 10), 100)  # cap at 100
+    iterations = _iterations(arguments)
     test_message = b"Benchmark test message for PQC operations"
 
     # Try as KEM
     try:
-        kem = oqs.KeyEncapsulation(alg)
-        details = kem.details
+        with oqs.KeyEncapsulation(alg) as kem:
+            details = kem.details
 
-        # Keygen timing
-        t0 = time.perf_counter()
-        for _ in range(iterations):
-            pk = kem.generate_keypair()
-            kem.export_secret_key()
-        keygen_ms = (time.perf_counter() - t0) / iterations * 1000
+            # Keygen timing
+            t0 = time.perf_counter()
+            for _ in range(iterations):
+                with oqs.KeyEncapsulation(alg) as generated:
+                    pk = generated.generate_keypair()
+                    sk = generated.export_secret_key()
+            keygen_ms = (time.perf_counter() - t0) / iterations * 1000
 
-        # Encap timing
-        sk = kem.export_secret_key()
-        t0 = time.perf_counter()
-        for _ in range(iterations):
-            ct, ss = kem.encap_secret(pk)
-        encap_ms = (time.perf_counter() - t0) / iterations * 1000
+            # Encap timing
+            t0 = time.perf_counter()
+            for _ in range(iterations):
+                ct, ss = kem.encap_secret(pk)
+            encap_ms = (time.perf_counter() - t0) / iterations * 1000
 
-        # Decap timing
-        kem2 = oqs.KeyEncapsulation(alg, sk)
-        t0 = time.perf_counter()
-        for _ in range(iterations):
-            kem2.decap_secret(ct)
-        decap_ms = (time.perf_counter() - t0) / iterations * 1000
+            # Decap timing
+            with oqs.KeyEncapsulation(alg, sk) as kem2:
+                t0 = time.perf_counter()
+                for _ in range(iterations):
+                    kem2.decap_secret(ct)
+                decap_ms = (time.perf_counter() - t0) / iterations * 1000
 
-        return {
-            "algorithm": alg,
-            "type": "KEM",
-            "iterations": iterations,
-            "timing_ms": {
-                "keygen": round(keygen_ms, 3),
-                "encap": round(encap_ms, 3),
-                "decap": round(decap_ms, 3),
-            },
-            "sizes_bytes": {
-                "public_key": details["length_public_key"],
-                "secret_key": details["length_secret_key"],
-                "ciphertext": details["length_ciphertext"],
-                "shared_secret": details["length_shared_secret"],
-            },
-            "nist_level": details.get("claimed_nist_level", "Unknown"),
-        }
+                return {
+                    "algorithm": alg,
+                    "type": "KEM",
+                    "iterations": iterations,
+                    "timing_ms": {
+                        "keygen": round(keygen_ms, 3),
+                        "encap": round(encap_ms, 3),
+                        "decap": round(decap_ms, 3),
+                    },
+                    "sizes_bytes": {
+                        "public_key": details["length_public_key"],
+                        "secret_key": details["length_secret_key"],
+                        "ciphertext": details["length_ciphertext"],
+                        "shared_secret": details["length_shared_secret"],
+                    },
+                    "nist_level": details.get("claimed_nist_level", "Unknown"),
+                }
     except MechanismNotSupportedError:
         pass
 
     # Try as signature
-    sig = oqs.Signature(alg)
-    details = sig.details
+    with oqs.Signature(alg) as sig:
+        details = sig.details
 
-    # Keygen timing
-    t0 = time.perf_counter()
-    for _ in range(iterations):
-        pk = sig.generate_keypair()
-        sig.export_secret_key()
-    keygen_ms = (time.perf_counter() - t0) / iterations * 1000
+        # Keygen timing
+        t0 = time.perf_counter()
+        for _ in range(iterations):
+            with oqs.Signature(alg) as generated:
+                pk = generated.generate_keypair()
+                sk = generated.export_secret_key()
+        keygen_ms = (time.perf_counter() - t0) / iterations * 1000
 
-    # Sign timing
-    sk = sig.export_secret_key()
-    sig2 = oqs.Signature(alg, sk)
-    t0 = time.perf_counter()
-    for _ in range(iterations):
-        signature = sig2.sign(test_message)
-    sign_ms = (time.perf_counter() - t0) / iterations * 1000
+        # Sign timing
+        with oqs.Signature(alg, sk) as sig2:
+            t0 = time.perf_counter()
+            for _ in range(iterations):
+                signature = sig2.sign(test_message)
+            sign_ms = (time.perf_counter() - t0) / iterations * 1000
 
-    # Verify timing
-    sig3 = oqs.Signature(alg)
-    t0 = time.perf_counter()
-    for _ in range(iterations):
-        sig3.verify(test_message, signature, pk)
-    verify_ms = (time.perf_counter() - t0) / iterations * 1000
+            # Verify timing
+            with oqs.Signature(alg) as sig3:
+                t0 = time.perf_counter()
+                for _ in range(iterations):
+                    sig3.verify(test_message, signature, pk)
+                verify_ms = (time.perf_counter() - t0) / iterations * 1000
 
-    return {
-        "algorithm": alg,
-        "type": "Signature",
-        "iterations": iterations,
-        "timing_ms": {
-            "keygen": round(keygen_ms, 3),
-            "sign": round(sign_ms, 3),
-            "verify": round(verify_ms, 3),
-        },
-        "sizes_bytes": {
-            "public_key": details["length_public_key"],
-            "secret_key": details["length_secret_key"],
-            "signature": details["length_signature"],
-        },
-        "nist_level": details.get("claimed_nist_level", "Unknown"),
-    }
+                return {
+                    "algorithm": alg,
+                    "type": "Signature",
+                    "iterations": iterations,
+                    "timing_ms": {
+                        "keygen": round(keygen_ms, 3),
+                        "sign": round(sign_ms, 3),
+                        "verify": round(verify_ms, 3),
+                    },
+                    "sizes_bytes": {
+                        "public_key": details["length_public_key"],
+                        "secret_key": details["length_secret_key"],
+                        "signature": details["length_signature"],
+                    },
+                    "nist_level": details.get("claimed_nist_level", "Unknown"),
+                }
 
 
 # Classical counterpart mapping for comparison tool
@@ -521,7 +543,7 @@ def _benchmark_classical(algorithm: str, iterations: int) -> dict[str, Any]:
 def handle_compare(arguments: dict[str, Any]) -> dict[str, Any]:
     """Compare a PQC algorithm against its classical counterpart."""
     alg = arguments["algorithm"]
-    iterations = min(arguments.get("iterations", 10), 100)
+    iterations = _iterations(arguments)
 
     classical_name = _CLASSICAL_COUNTERPARTS.get(alg)
     if not classical_name:

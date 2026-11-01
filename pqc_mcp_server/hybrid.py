@@ -833,29 +833,29 @@ def hybrid_keygen() -> dict[str, Any]:
     x_pk = x_sk.public_key()
     x_pk_bytes = x_pk.public_bytes(Encoding.Raw, PublicFormat.Raw)
 
-    kem = oqs.KeyEncapsulation("ML-KEM-768")
-    pqc_pk = kem.generate_keypair()
-    pqc_sk = kem.export_secret_key()
+    with oqs.KeyEncapsulation("ML-KEM-768") as kem:
+        pqc_pk = kem.generate_keypair()
+        pqc_sk = kem.export_secret_key()
 
-    return {
-        "suite": SUITE,
-        "classical": {
-            "algorithm": "X25519",
-            "public_key": base64.b64encode(x_pk_bytes).decode(),
-            "secret_key": base64.b64encode(
-                x_sk.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
-            ).decode(),
-            "fingerprint": _fingerprint_public_key(x_pk_bytes),
-            "fingerprint_words": _fingerprint_words(x_pk_bytes),
-        },
-        "pqc": {
-            "algorithm": "ML-KEM-768",
-            "public_key": base64.b64encode(pqc_pk).decode(),
-            "secret_key": base64.b64encode(pqc_sk).decode(),
-            "fingerprint": _fingerprint_public_key(pqc_pk),
-            "fingerprint_words": _fingerprint_words(pqc_pk),
-        },
-    }
+        return {
+            "suite": SUITE,
+            "classical": {
+                "algorithm": "X25519",
+                "public_key": base64.b64encode(x_pk_bytes).decode(),
+                "secret_key": base64.b64encode(
+                    x_sk.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+                ).decode(),
+                "fingerprint": _fingerprint_public_key(x_pk_bytes),
+                "fingerprint_words": _fingerprint_words(x_pk_bytes),
+            },
+            "pqc": {
+                "algorithm": "ML-KEM-768",
+                "public_key": base64.b64encode(pqc_pk).decode(),
+                "secret_key": base64.b64encode(pqc_sk).decode(),
+                "fingerprint": _fingerprint_public_key(pqc_pk),
+                "fingerprint_words": _fingerprint_words(pqc_pk),
+            },
+        }
 
 
 def hybrid_encap(classical_pk: bytes, pqc_pk: bytes) -> dict[str, Any]:
@@ -873,21 +873,21 @@ def hybrid_encap(classical_pk: bytes, pqc_pk: bytes) -> dict[str, Any]:
     _check_x25519_shared_secret(ss_x25519)
 
     # ML-KEM-768: encapsulate
-    kem = oqs.KeyEncapsulation("ML-KEM-768")
-    pqc_ct, ss_mlkem = kem.encap_secret(pqc_pk)
-    if len(pqc_ct) != _MLKEM768_CT_SIZE:
-        raise RuntimeError(f"Unexpected ML-KEM-768 ciphertext length: {len(pqc_ct)}")
+    with oqs.KeyEncapsulation("ML-KEM-768") as kem:
+        pqc_ct, ss_mlkem = kem.encap_secret(pqc_pk)
+        if len(pqc_ct) != _MLKEM768_CT_SIZE:
+            raise RuntimeError(f"Unexpected ML-KEM-768 ciphertext length: {len(pqc_ct)}")
 
-    # Combine via SHA3-256
-    combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, classical_pk)
+        # Combine via SHA3-256
+        combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, classical_pk)
 
-    return {
-        "suite": SUITE,
-        "shared_secret": base64.b64encode(combined_ss).decode(),
-        "shared_secret_hex": combined_ss.hex(),
-        "x25519_ephemeral_public_key": base64.b64encode(eph_pk_bytes).decode(),
-        "pqc_ciphertext": base64.b64encode(pqc_ct).decode(),
-    }
+        return {
+            "suite": SUITE,
+            "shared_secret": base64.b64encode(combined_ss).decode(),
+            "shared_secret_hex": combined_ss.hex(),
+            "x25519_ephemeral_public_key": base64.b64encode(eph_pk_bytes).decode(),
+            "pqc_ciphertext": base64.b64encode(pqc_ct).decode(),
+        }
 
 
 def hybrid_decap(
@@ -912,17 +912,17 @@ def hybrid_decap(
     pk_x25519 = sk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
 
     # ML-KEM-768: decapsulate
-    kem = oqs.KeyEncapsulation("ML-KEM-768", pqc_sk)
-    ss_mlkem = kem.decap_secret(pqc_ct)
+    with oqs.KeyEncapsulation("ML-KEM-768", pqc_sk) as kem:
+        ss_mlkem = kem.decap_secret(pqc_ct)
 
-    # Combine via SHA3-256
-    combined_ss = _kem_combine(ss_mlkem, ss_x25519, x25519_epk, pk_x25519)
+        # Combine via SHA3-256
+        combined_ss = _kem_combine(ss_mlkem, ss_x25519, x25519_epk, pk_x25519)
 
-    return {
-        "suite": SUITE,
-        "shared_secret": base64.b64encode(combined_ss).decode(),
-        "shared_secret_hex": combined_ss.hex(),
-    }
+        return {
+            "suite": SUITE,
+            "shared_secret": base64.b64encode(combined_ss).decode(),
+            "shared_secret_hex": combined_ss.hex(),
+        }
 
 
 def _core_encrypt(
@@ -937,6 +937,8 @@ def _core_encrypt(
     core, ensuring the AEAD ciphertext is cryptographically bound to the mode.
     An auth-seal ciphertext cannot be opened as anon-seal and vice versa.
     """
+    if len(plaintext_bytes) > 1_048_576:
+        raise ValueError("Plaintext exceeds decoded size limit (1048576 bytes)")
     _validate_x25519_key(recipient_classical_pk, "recipient_classical_public_key")
     _validate_mlkem768_pk(recipient_pqc_pk, "recipient_pqc_public_key")
 
@@ -949,29 +951,29 @@ def _core_encrypt(
     ss_x25519 = eph_sk.exchange(recipient_x_pk)
     _check_x25519_shared_secret(ss_x25519)
 
-    kem = oqs.KeyEncapsulation("ML-KEM-768")
-    pqc_ct, ss_mlkem = kem.encap_secret(recipient_pqc_pk)
-    if len(pqc_ct) != _MLKEM768_CT_SIZE:
-        raise RuntimeError(f"Unexpected ML-KEM-768 ciphertext length: {len(pqc_ct)}")
+    with oqs.KeyEncapsulation("ML-KEM-768") as kem:
+        pqc_ct, ss_mlkem = kem.encap_secret(recipient_pqc_pk)
+        if len(pqc_ct) != _MLKEM768_CT_SIZE:
+            raise RuntimeError(f"Unexpected ML-KEM-768 ciphertext length: {len(pqc_ct)}")
 
-    combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, recipient_classical_pk)
+        combined_ss = _kem_combine(ss_mlkem, ss_x25519, eph_pk_bytes, recipient_classical_pk)
 
-    # Derive AEAD key + nonce (v3: mode-bound, epk domain separation)
-    aes_key, nonce = _derive_aead_key_and_nonce(combined_ss, eph_pk_bytes, mode=mode)
+        # Derive AEAD key + nonce (v3: mode-bound, epk domain separation)
+        aes_key, nonce = _derive_aead_key_and_nonce(combined_ss, eph_pk_bytes, mode=mode)
 
-    # Encrypt with AAD (v3: length-prefixed, mode-bound)
-    aad = _build_aad(eph_pk_bytes, pqc_ct, mode=mode)
-    aesgcm = AESGCM(aes_key)
-    ciphertext = aesgcm.encrypt(nonce, plaintext_bytes, aad)
+        # Encrypt with AAD (v3: length-prefixed, mode-bound)
+        aad = _build_aad(eph_pk_bytes, pqc_ct, mode=mode)
+        aesgcm = AESGCM(aes_key)
+        ciphertext = aesgcm.encrypt(nonce, plaintext_bytes, aad)
 
-    return {
-        "version": ENVELOPE_VERSION,
-        "mode": mode,
-        "suite": SUITE,
-        "x25519_ephemeral_public_key": base64.b64encode(eph_pk_bytes).decode(),
-        "pqc_ciphertext": base64.b64encode(pqc_ct).decode(),
-        "ciphertext": base64.b64encode(ciphertext).decode(),
-    }
+        return {
+            "version": ENVELOPE_VERSION,
+            "mode": mode,
+            "suite": SUITE,
+            "x25519_ephemeral_public_key": base64.b64encode(eph_pk_bytes).decode(),
+            "pqc_ciphertext": base64.b64encode(pqc_ct).decode(),
+            "ciphertext": base64.b64encode(ciphertext).decode(),
+        }
 
 
 def hybrid_seal(
@@ -1028,42 +1030,42 @@ def hybrid_open(
     pk_x25519 = sk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
 
     # ML-KEM-768 decapsulate
-    kem = oqs.KeyEncapsulation("ML-KEM-768", pqc_sk)
-    ss_mlkem = kem.decap_secret(pqc_ct)
+    with oqs.KeyEncapsulation("ML-KEM-768", pqc_sk) as kem:
+        ss_mlkem = kem.decap_secret(pqc_ct)
 
-    # Combine + derive AEAD key + nonce (version-aware for backwards compat)
-    env_version = envelope["version"]
-    env_mode = envelope.get("mode", "")
+        # Combine + derive AEAD key + nonce (version-aware for backwards compat)
+        env_version = envelope["version"]
+        env_mode = envelope.get("mode", "")
 
-    # v3 public API: enforce mode = anon-seal. Auth envelopes must go
-    # through hybrid_auth_open which calls _core_decrypt with auth-seal.
-    if env_version == ENVELOPE_VERSION and env_mode not in (_MODE_ANON_SEAL, _MODE_AUTH_SEAL):
-        raise ValueError(
-            f"Unknown mode '{env_mode}' for v3 envelope. "
-            f"Expected '{_MODE_ANON_SEAL}' or '{_MODE_AUTH_SEAL}'."
+        # v3 public API: enforce mode = anon-seal. Auth envelopes must go
+        # through hybrid_auth_open which calls _core_decrypt with auth-seal.
+        if env_version == ENVELOPE_VERSION and env_mode not in (_MODE_ANON_SEAL, _MODE_AUTH_SEAL):
+            raise ValueError(
+                f"Unknown mode '{env_mode}' for v3 envelope. "
+                f"Expected '{_MODE_ANON_SEAL}' or '{_MODE_AUTH_SEAL}'."
+            )
+
+        combined_ss = _kem_combine(ss_mlkem, ss_x25519, epk_bytes, pk_x25519)
+        aes_key, nonce = _derive_aead_key_and_nonce(
+            combined_ss, epk_bytes, version=env_version, mode=env_mode
         )
 
-    combined_ss = _kem_combine(ss_mlkem, ss_x25519, epk_bytes, pk_x25519)
-    aes_key, nonce = _derive_aead_key_and_nonce(
-        combined_ss, epk_bytes, version=env_version, mode=env_mode
-    )
+        # Decrypt with AAD verification
+        aad = _build_aad(epk_bytes, pqc_ct, version=env_version, mode=env_mode)
+        aesgcm = AESGCM(aes_key)
+        plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, aad)
 
-    # Decrypt with AAD verification
-    aad = _build_aad(epk_bytes, pqc_ct, version=env_version, mode=env_mode)
-    aesgcm = AESGCM(aes_key)
-    plaintext_bytes = aesgcm.decrypt(nonce, ciphertext, aad)
+        # Try UTF-8 decode
+        try:
+            plaintext_str = plaintext_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            plaintext_str = None
 
-    # Try UTF-8 decode
-    try:
-        plaintext_str = plaintext_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        plaintext_str = None
-
-    return {
-        "suite": SUITE,
-        "plaintext": plaintext_str,
-        "plaintext_base64": base64.b64encode(plaintext_bytes).decode(),
-    }
+        return {
+            "suite": SUITE,
+            "plaintext": plaintext_str,
+            "plaintext_base64": base64.b64encode(plaintext_bytes).decode(),
+        }
 
 
 def hybrid_auth_seal(
@@ -1082,7 +1084,8 @@ def hybrid_auth_seal(
     Still not forward-secret against later recipient key compromise.
 
     max_decrypt_time: optional sender-controlled TTL in seconds. If set,
-    the recipient cannot decrypt after timestamp + max_decrypt_time.
+    this API refuses to decrypt after timestamp + max_decrypt_time.
+    A recipient holding the private keys can bypass this API policy.
     """
     if max_decrypt_time is not None and max_decrypt_time < 0:
         raise ValueError("max_decrypt_time must be non-negative")
@@ -1128,34 +1131,34 @@ def hybrid_auth_seal(
     )
 
     # Sign transcript with ML-DSA
-    sig = oqs.Signature(sender_sig_algorithm, sender_sig_sk)
-    signature = sig.sign(transcript)
+    with oqs.Signature(sender_sig_algorithm, sender_sig_sk) as sig:
+        signature = sig.sign(transcript)
 
-    result = {
-        "version": envelope["version"],
-        "mode": _MODE_AUTH_SEAL,
-        "suite": envelope["suite"],
-        "sender_signature_algorithm": sender_sig_algorithm,
-        "sender_public_key": base64.b64encode(sender_sig_pk).decode(),
-        "sender_key_fingerprint": sender_fp,
-        "recipient_classical_key_fingerprint": recipient_classical_fp,
-        "recipient_pqc_key_fingerprint": recipient_pqc_fp,
-        "x25519_ephemeral_public_key": envelope["x25519_ephemeral_public_key"],
-        "pqc_ciphertext": envelope["pqc_ciphertext"],
-        "ciphertext": envelope["ciphertext"],
-        "timestamp": timestamp,
-        "signature": base64.b64encode(signature).decode(),
-    }
-    if max_decrypt_time is not None:
-        result["max_decrypt_time"] = str(max_decrypt_time)
-    return result
+        result = {
+            "version": envelope["version"],
+            "mode": _MODE_AUTH_SEAL,
+            "suite": envelope["suite"],
+            "sender_signature_algorithm": sender_sig_algorithm,
+            "sender_public_key": base64.b64encode(sender_sig_pk).decode(),
+            "sender_key_fingerprint": sender_fp,
+            "recipient_classical_key_fingerprint": recipient_classical_fp,
+            "recipient_pqc_key_fingerprint": recipient_pqc_fp,
+            "x25519_ephemeral_public_key": envelope["x25519_ephemeral_public_key"],
+            "pqc_ciphertext": envelope["pqc_ciphertext"],
+            "ciphertext": envelope["ciphertext"],
+            "timestamp": timestamp,
+            "signature": base64.b64encode(signature).decode(),
+        }
+        if max_decrypt_time is not None:
+            result["max_decrypt_time"] = str(max_decrypt_time)
+        return result
 
 
 # Default max envelope age for replay protection (24 hours)
 _MAX_ENVELOPE_AGE_SECONDS = 24 * 60 * 60
 
 # Envelope field size limits (prevent resource exhaustion / memory bombs)
-_MAX_B64_FIELD_SIZE = 1_000_000  # 1MB base64 = ~750KB decoded
+_MAX_B64_FIELD_SIZE = ((1_048_576 + 16 + 2) // 3) * 4  # plaintext + GCM tag, base64
 _MAX_ENVELOPE_FIELDS = 50  # prevent field-count DoS
 
 _SIZE_LIMITED_FIELDS = (
@@ -1274,11 +1277,15 @@ def _verify_authenticated_envelope(
     # compatibility but should trigger a visible warning to the caller.
     is_v1 = envelope.get("version") == _ENVELOPE_VERSION_V1
     v1_warning = None
+    if envelope.get("version") == _ENVELOPE_VERSION_V2:
+        v1_warning = (
+            "WARNING: Deprecated v2 envelope lacks cryptographic mode binding; upgrade to v3."
+        )
     if is_v1:
         v1_warning = (
             "WARNING: This is a v1 envelope without signed timestamps. "
             "It has no freshness protection and can be replayed indefinitely. "
-            "Upgrade to pqc-mcp-v2 envelopes for replay protection."
+            "Upgrade to pqc-mcp-v3 envelopes for freshness and mode binding."
         )
     sig_alg = envelope.get("sender_signature_algorithm", "")
     if not sig_alg:
@@ -1328,6 +1335,8 @@ def _verify_authenticated_envelope(
     pqc_ct_bytes = base64.b64decode(envelope["pqc_ciphertext"], validate=True)
     aead_ct_bytes = base64.b64decode(envelope["ciphertext"], validate=True)
     signature = base64.b64decode(envelope["signature"], validate=True)
+    if len(sender_pk) != _MLDSA65_PK_SIZE or len(signature) != 3309:
+        raise ValueError("Invalid ML-DSA-65 public key or signature length")
 
     # Extract timestamp for replay protection
     # SECURITY: v2+ envelopes MUST have a timestamp. A malicious sender could
@@ -1372,54 +1381,54 @@ def _verify_authenticated_envelope(
     )
 
     # Verify signature
-    sig_verifier = oqs.Signature(sig_alg)
-    is_valid = sig_verifier.verify(transcript, signature, sender_pk)
-    if not is_valid:
-        raise SenderVerificationError("Signature verification failed")
+    with oqs.Signature(sig_alg) as sig_verifier:
+        is_valid = sig_verifier.verify(transcript, signature, sender_pk)
+        if not is_valid:
+            raise SenderVerificationError("Signature verification failed")
 
-    # Replay protection: check timestamp freshness AFTER signature verification
-    # (timestamp is now trustworthy because it's covered by the signature)
-    if envelope_timestamp and max_age_seconds > 0:
-        try:
-            ts_int = int(envelope_timestamp)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ValueError(f"Invalid envelope timestamp: {exc}") from exc
-        age = time.time() - ts_int
-        if age > max_age_seconds:
-            raise ValueError(
-                f"Envelope is stale ({int(age)}s old, max {max_age_seconds}s). "
-                "Possible replay attack."
-            )
-        if age < -300:  # 5 min clock skew tolerance
-            raise ValueError("Envelope timestamp is in the future. Clock skew or tampering.")
-
-    # Sender-controlled TTL: refuse to decrypt expired envelopes.
-    # This is sender-imposed (unlike max_age_seconds which is recipient-controlled).
-    # The value is signed in the transcript, so it cannot be tampered with.
-    if env_mdt and envelope_timestamp:
-        try:
-            mdt_int = int(env_mdt)
-            ts_int_for_mdt = int(envelope_timestamp)
-            if time.time() > ts_int_for_mdt + mdt_int:
+        # Replay protection: check timestamp freshness AFTER signature verification
+        # (timestamp is now trustworthy because it's covered by the signature)
+        if envelope_timestamp and max_age_seconds > 0:
+            try:
+                ts_int = int(envelope_timestamp)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"Invalid envelope timestamp: {exc}") from exc
+            age = time.time() - ts_int
+            if age > max_age_seconds:
                 raise ValueError(
-                    f"Envelope has expired (sender-imposed TTL of {mdt_int}s exceeded). "
-                    "The sender set this message to self-destruct."
+                    f"Envelope is stale ({int(age)}s old, max {max_age_seconds}s). "
+                    "Possible replay attack."
                 )
-        except (TypeError, OverflowError) as exc:
-            raise ValueError(f"Invalid max_decrypt_time: {exc}") from exc
+            if age < -300:  # 5 min clock skew tolerance
+                raise ValueError("Envelope timestamp is in the future. Clock skew or tampering.")
 
-    result = {
-        "sender_key_fingerprint": envelope_fp,
-        "sender_signature_algorithm": sig_alg,
-        "recipient_classical_key_fingerprint": envelope["recipient_classical_key_fingerprint"],
-        "recipient_pqc_key_fingerprint": envelope["recipient_pqc_key_fingerprint"],
-        "version": envelope["version"],
-        "suite": envelope["suite"],
-        "timestamp": envelope_timestamp or None,
-    }
-    if v1_warning:
-        result["warning"] = v1_warning
-    return result
+        # Sender-controlled TTL: refuse to decrypt expired envelopes.
+        # This is sender-imposed (unlike max_age_seconds which is recipient-controlled).
+        # The value is signed in the transcript, so it cannot be tampered with.
+        if env_mdt and envelope_timestamp:
+            try:
+                mdt_int = int(env_mdt)
+                ts_int_for_mdt = int(envelope_timestamp)
+                if time.time() > ts_int_for_mdt + mdt_int:
+                    raise ValueError(
+                        f"Envelope has expired (sender-imposed TTL of {mdt_int}s exceeded). "
+                        "This API enforces the sender's signed expiration policy."
+                    )
+            except (TypeError, OverflowError) as exc:
+                raise ValueError(f"Invalid max_decrypt_time: {exc}") from exc
+
+        result = {
+            "sender_key_fingerprint": envelope_fp,
+            "sender_signature_algorithm": sig_alg,
+            "recipient_classical_key_fingerprint": envelope["recipient_classical_key_fingerprint"],
+            "recipient_pqc_key_fingerprint": envelope["recipient_pqc_key_fingerprint"],
+            "version": envelope["version"],
+            "suite": envelope["suite"],
+            "timestamp": envelope_timestamp or None,
+        }
+        if v1_warning:
+            result["warning"] = v1_warning
+        return result
 
 
 def hybrid_auth_open(
@@ -1467,6 +1476,8 @@ def hybrid_auth_open(
     result["sender_key_fingerprint"] = verified["sender_key_fingerprint"]
     result["sender_signature_algorithm"] = verified["sender_signature_algorithm"]
     result["authenticated"] = True
+    if "warning" in verified:
+        result["warning"] = verified["warning"]
     return result
 
 

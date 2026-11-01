@@ -2,8 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![liboqs](https://img.shields.io/badge/liboqs-0.15.0-green.svg)](https://openquantumsafe.org/)
-[![MCP](https://img.shields.io/badge/MCP-1.6+-purple.svg)](https://modelcontextprotocol.io/)
+[![liboqs](https://img.shields.io/badge/liboqs-0.16.0-green.svg)](https://openquantumsafe.org/)
+[![MCP](https://img.shields.io/badge/MCP-1.30+-purple.svg)](https://modelcontextprotocol.io/)
 
 > **Research and Prototyping Only.** This server uses [liboqs](https://github.com/open-quantum-safe/liboqs), which is explicitly not recommended for production use or for protecting sensitive data. When using `store_as` mode (recommended), secret keys are redacted from tool output and held in a session-scoped keyring. Without `store_as`, secret keys and shared secrets appear in tool output, which may enter model context, client logs, or transcripts. Set `PQC_REQUIRE_KEY_HANDLES=1` to enforce handle-only mode for all secret-key operations. Suitable for experimentation, education, and interoperability testing.
 
@@ -39,35 +39,23 @@ This MCP server makes these algorithms accessible to AI agents for research, dev
 
 ### Installation
 
-#### 1. Install liboqs
-
-**macOS (Homebrew with shared library):**
-```bash
-# Homebrew only provides static library, build from source for shared:
-git clone --depth 1 --branch 0.15.0 https://github.com/open-quantum-safe/liboqs.git
-cd liboqs && mkdir build && cd build
-cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=$HOME/.local ..
-make -j4 && make install
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install liboqs-dev
-```
-
-**Alternative:** Use the bundled install script which automates the above:
-```bash
-bash scripts/install-liboqs.sh
-```
-
-#### 2. Clone and Install
+#### 1. Clone and build the aligned backend
 
 ```bash
 git clone https://github.com/scottdhughes/post-quantum-mcp.git
 cd post-quantum-mcp
+mkdir -p .vendor/liboqs-0.16
+bash scripts/install-liboqs.sh --prefix "$PWD/.vendor/liboqs-0.16"
+```
 
-# Install all dependencies (creates .venv automatically)
-uv sync --all-extras
+The script builds liboqs 0.16.0 as a shared library and installs build tools through
+Homebrew or apt if needed. The project-local prefix avoids a system-wide liboqs
+installation. Distribution packages may lag the tested version.
+
+#### 2. Install locked Python dependencies
+
+```bash
+uv sync --frozen --all-extras
 ```
 
 #### 3. Configure Claude Code / Claude Desktop
@@ -82,7 +70,7 @@ Add to your MCP configuration:
       "type": "stdio",
       "command": "/path/to/post-quantum-mcp/run.sh",
       "args": [],
-      "env": {}
+      "env": {"PQC_REQUIRE_KEY_HANDLES": "1"}
     }
   }
 }
@@ -123,8 +111,8 @@ Output: Key sizes, security level, performance characteristics
 Generate a quantum-resistant key pair.
 
 ```
-Input: { "algorithm": "ML-DSA-65" }
-Output: Base64-encoded public and secret keys
+Input: { "algorithm": "ML-DSA-65", "store_as": "sender-signing" }
+Output: Public key and opaque handle (private key stays in the server)
 ```
 
 ### `pqc_encapsulate`
@@ -483,39 +471,58 @@ Providing both a store name and raw keys for the same role is an error.
 v3 envelopes are mode-bound: every envelope carries an explicit `mode` field (`anon-seal` or `auth-seal`) that is bound into HKDF info, AAD, and the auth transcript. This provides true cross-mode separation — ciphertext produced by one mode cannot be decrypted by the other, blocking auth-stripping downgrade attacks at the AEAD layer. AAD uses length-prefixed framing (self-delimiting) in v3. Authenticated envelopes include a signed `timestamp` field in the canonical transcript; on verification/open, the server checks freshness (default: 24 hours, configurable via `max_age_seconds`). Clock skew tolerance is 5 minutes.
 
 ### Replay Protection
-The server maintains a signature-digest cache (SHA3-256 of envelope signature bytes) with TTL. `pqc_hybrid_auth_verify` performs a read-only replay check. `pqc_hybrid_auth_open` performs check-before-decrypt and mark-after-success. The cache persists to `~/.pqc/state/replay-cache.json` and survives server restarts. Max 50,000 entries with oldest-first eviction.
+Authenticated MCP open calls use `~/.pqc/state/replay-cache.sqlite3`. SQLite transactions coordinate processes sharing that file. The signature digest is checked/inserted atomically after successful verification and decryption; verify-only calls do not mark it. Persistence failure, corruption, and a full 50,000-entry store fail closed. Live entries are retained for 24 hours plus 301 seconds (the permitted 300-second future clock skew and a one-second boundary margin) rather than evicted. A valid existing JSON cache is imported once; malformed legacy state blocks initialization instead of silently resetting it. The legacy JSON `ReplayCache` class remains available for diagnostic compatibility and is not the server default.
+
+MCP `max_age_seconds` must be positive and cannot exceed the configured replay acceptance window. The low-level library API still permits research opt-outs. Deduplication is not application-level exactly-once processing: a crash after open but before processing or acknowledgment requires an application recovery strategy.
 
 ### Envelope Size Validation
-All envelopes are validated before any cryptographic processing: max 1MB per base64 field (`ciphertext`, `pqc_ciphertext`, `signature`, `sender_public_key`, `x25519_ephemeral_public_key`), max 50 fields total. Prevents memory bombs and resource exhaustion.
+Local seals accept at most 1,048,576 **decoded bytes**, including UTF-8 encoding costs. The ciphertext base64 allowance includes the 16-byte GCM tag and base64 expansion, so a successful local seal can be opened. Other envelope field/field-count bounds still apply. The relay separately limits the entire serialized JSON request to 51,200 bytes; a locally valid envelope can be too large for relay delivery.
 
 ### Server Security Policy
-Set `PQC_REQUIRE_KEY_HANDLES=1` to enforce handle-only mode: the server rejects any tool call that passes raw secret keys, forcing use of `store_as`/`key_store_name` for all secret-key operations (keygen, sign, decapsulate, and hybrid envelope operations). This is a server-side check that cannot be bypassed by a misbehaving agent.
+Set `PQC_REQUIRE_KEY_HANDLES=1` to reject raw private-key arguments and require `store_as` during both generic and hybrid key generation. Names must be non-blank strings of at most 128 characters; missing, null, and empty handles cannot fall back to raw key output. Handles last only for the server process. This policy prevents private-key bytes from being returned by key generation; it does not hide plaintext from an authorized open operation or shared secrets returned by low-level KEM tools.
 
 ### v1/v2 Backwards Compatibility
-v1 envelopes (`pqc-mcp-v1`) are accepted on open/verify for backwards compatibility but produce a loud warning. v1 envelopes lack signed timestamps and therefore skip freshness checks and provide no replay protection. v2 envelopes (`pqc-mcp-v2`) are accepted but lack mode-binding; a deprecation warning is included in the response.
+New envelopes are v3. Low-level and MCP open/verify paths retain legacy v1/v2 compatibility, with warnings on authenticated verify/open. v1 lacks mandatory signed timestamps and can become replayable after finite deduplication retention; v2 lacks mode binding. Legacy support is a research compatibility concession, not equivalent security to v3. Prefer v3-only inputs in new applications.
 
 ## Relay Transport
 
-The project includes a Cloudflare Worker relay for cross-machine A2A messaging.
+The v0.2 relay uses SQLite-backed Durable Objects for persistent mailbox authorization, transactional quotas, message expiry, and idempotent deposits. An operator must register a mailbox before deposits or reads; GET/DELETE always require that mailbox's bearer token. Unknown mailboxes fail closed. The public endpoint listed in older releases has **not** been upgraded by these source changes.
 
-**Live:** `https://quantum-seal-relay.novoamorx1.workers.dev`
-
-The relay is an opaque envelope mailbox — it stores and forwards JSON blobs without performing cryptographic operations or accessing private keys.
-
-| Endpoint | Method | Purpose |
+| Endpoint | Method | Authorization |
 |---|---|---|
-| `/mailboxes/:fp` | POST | Deposit envelope into recipient's mailbox |
-| `/mailboxes/:fp` | GET | Fetch pending envelopes |
-| `/mailboxes/:fp/:id` | DELETE | Acknowledge receipt |
-| `/mailboxes/:fp/allowlist` | PUT | Configure sender allowlist |
+| `/mailboxes/:fp/register` | POST | Operator admin token; issues/rotates mailbox token |
+| `/mailboxes/:fp` | POST | Public deposit to an existing mailbox; advisory sender filter may apply |
+| `/mailboxes/:fp` | GET | Mailbox token |
+| `/mailboxes/:fp/:id` | DELETE | Mailbox token |
+| `/mailboxes/:fp/allowlist` | PUT | Operator admin token; advisory sender filter |
 
-**Limits:** 50KB max envelope, 1000 msgs/mailbox, 24h TTL, rate limiting (60 POST/min, 120 GET/min per IP).
+The default admin credential is absent; missing/known development credentials are rejected. Register/rotate through operator tooling, outside model tool arguments. Configure the Python MCP server with:
 
-**Security:** The relay never sees plaintext. End-to-end confidentiality, integrity, and sender authentication are enforced client-side. See `deploy/relay/RELAY-SPEC.md` for the full transport contract.
+```text
+PQC_RELAY_ENABLED=1
+PQC_RELAY_ALLOWED_URLS=https://your-relay.example
+PQC_RELAY_TOKEN_FILE=/absolute/path/to/owner-only-relay-tokens.json
+```
+
+The token file must be an owner-only regular file (mode 0600 on POSIX) owned by the server user:
+
+```json
+[
+  {"relay_url":"https://your-relay.example","fingerprint":"<64 lowercase hex characters>","token":"<mailbox token>"}
+]
+```
+
+Credentials are scoped to origin and mailbox and are never accepted as tool arguments. Redirects are refused. GET responses are bounded to 6,000,000 decoded bytes. Relay calls run outside the MCP event loop.
+
+Defaults: 51,200 request bytes, 1,000 live messages/mailbox, 24-hour message expiry. Credential records never expire with messages. Per-IP fixed-window rate limits use a separate Durable Object and fail closed on storage errors. Sender allowlists are advisory metadata filters; recipients must verify ML-DSA signatures.
+
+The Python client sends a stable SHA-256 idempotency key for the canonical serialized envelope. Retries retain one message within its original TTL, even after acknowledgment. Receipt expiry permits a later new deposit; this does not promise permanent exactly-once delivery.
+
+See [the relay contract and migration guide](deploy/relay/RELAY-SPEC.md) before deployment. Legacy KV data is retained and is not automatically imported or deleted.
 
 ## Supported Algorithms
 
-> **Note:** Legacy algorithm names (Kyber, Dilithium, SPHINCS+) are accepted as aliases for compatibility with older liboqs versions.
+> Algorithm names are the exact names reported by the installed liboqs build. liboqs 0.16 removed SPHINCS+ and changed FrodoKEM naming/behavior; do not assume old names are aliases. Prefer ML-KEM, ML-DSA, and SLH-DSA names.
 
 ### Key Encapsulation Mechanisms (KEMs)
 
@@ -604,34 +611,38 @@ post-quantum-mcp/
 
 ## Tested Compatibility
 
-This table shows the exact versions CI-tested on every push. Other combinations may work but are not verified.
+The November 1, 2026 local validation used the following versions on macOS ARM64/Python 3.12.12. The configured CI matrix covers Python 3.10–3.13 on Ubuntu/macOS; use the associated GitHub Actions runs for cross-platform CI evidence.
 
-| Component | CI-Tested Version | Floor (pyproject.toml) | Notes |
-|-----------|------------------|----------------------|-------|
-| **liboqs** (C library) | 0.15.0 | — (built from source) | CI builds from source on Ubuntu and macOS |
-| **liboqs-python** | 0.14.1 | `>=0.10.0` | Version skew with liboqs 0.15.0 produces a warning; comprehensive unit, fuzz, Wycheproof, and Hypothesis test coverage all passes |
-| **cryptography** | 46.0.6 | `>=42.0.0` | X25519, HKDFExpand, AESGCM |
-| **mcp** | 1.26.0 | `>=1.6.0,<2.0.0` | MCP Server + stdio transport |
-| **Python** | 3.10, 3.11, 3.12, 3.13 | `>=3.10` | Full matrix on Ubuntu + macOS |
+| Component | Locally validated version | Declared dependency |
+|---|---|---|
+| liboqs C | 0.16.0 | Built from the release tag |
+| liboqs-python | 0.16.0.2 | `>=0.16.0.2,<0.17` |
+| cryptography | 50.0.2 | `>=50.0.2` |
+| MCP | 1.30.0 | `>=1.30.0,<2.0.0` |
+| Hypothesis | 6.170.14 | `>=6.100,<7` (dev; lock selects a compatible version on Python 3.10) |
+| Wrangler / Vitest / Cloudflare test plugin | 4.156.0 / 5.0.5 / 1.4.11 | See relay package-lock.json |
+| Node | 26.12.1 locally; 24 in CI | `>=24` for the relay toolchain |
 
-**liboqs / liboqs-python version skew:** The C library at 0.15.0 paired with the Python wrapper at 0.14.1 triggers `UserWarning: liboqs version (major, minor) 0.15.0 differs from liboqs-python version 0.14.1`. This is cosmetic — all algorithms used by this project (ML-KEM-768, ML-DSA-65, ML-DSA-44/87, Falcon, SLH-DSA) work correctly. When liboqs-python 0.15.x reaches PyPI, update and the warning will resolve.
-
-**Compatibility stance:** The liboqs 0.15.0 + liboqs-python 0.14.1 pairing is the tested and supported configuration. The `UserWarning` is accepted in development. For production or demos, either align versions when liboqs-python 0.15.x is available, or suppress the warning explicitly. The project does not hard-fail on version mismatch — it warns and continues. All 248+ tests pass under this pairing.
-
-**What "may work" means:** Versions above the pyproject.toml floor but not in the CI-tested column are untested. They will likely work if no breaking API changes occurred, but we make no guarantee. If you encounter issues, pin to the CI-tested versions.
+Use `uv sync --frozen --all-extras` and `npm ci` to reproduce locked environments. The previous 0.15.0/0.14.1 mismatch workaround has been removed; use an aligned C library and wrapper. MCP 2.x is a separate migration.
 
 ## Development
 
 ```bash
 # Run tests
-uv run pytest tests/ -v
+uv run --frozen pytest tests/ -v
 
 # Format code
-uv run black pqc_mcp_server/ tests/
+uv run --frozen black pqc_mcp_server/ tests/
 
 # Type checking
-uv run mypy pqc_mcp_server/
+uv run --frozen mypy pqc_mcp_server/
 ```
+
+Ordinary pytest excludes external e2e tests. To run against an explicitly selected disposable relay, set `PQC_RELAY_E2E_URL`, `PQC_RELAY_E2E_ADMIN_TOKEN`, and (for local HTTP only) `PQC_RELAY_E2E_ALLOW_HTTP=1`, then run `uv run --frozen pytest -m e2e`.
+
+Relay checks: `npm ci && npm run typecheck && npm test && npm run build` from `deploy/relay/worker`. Tests include a SQLite-backed Node contract suite and the actual Workers runtime. See [repair status](docs/reviews/2026-11-01-repair-status.md) for measured results and limits.
+
+Forward secrecy remains a separate next milestone. v3 envelopes are not forward-secret against later recipient-key compromise; see [the next-stage requirements](docs/forward-secrecy-next.md).
 
 ## Related Projects
 

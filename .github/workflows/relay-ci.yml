@@ -3,22 +3,25 @@ name: Relay Worker CI
 on:
   push:
     branches: [main]
-    paths: ['deploy/relay/worker/**']
+    paths: ['deploy/relay/worker/**', '.github/workflows/relay-ci.yml']
   pull_request:
-    paths: ['deploy/relay/worker/**']
+    paths: ['deploy/relay/worker/**', '.github/workflows/relay-ci.yml']
 
 defaults:
   run:
     working-directory: deploy/relay/worker
 
+permissions:
+  contents: read
+
 jobs:
   typecheck-and-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
@@ -26,9 +29,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24
       - run: npm ci
       - run: npm test
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm audit --audit-level=high

@@ -22,6 +22,14 @@ class SecurityPolicy:
     def __init__(self) -> None:
         self.require_key_handles = _env_bool("PQC_REQUIRE_KEY_HANDLES", default=False)
 
+    def keygen_handle(self, arguments: dict[str, Any]) -> str | None:
+        """Validate before generating keys; policy mode never returns raw secrets."""
+        if "store_as" not in arguments:
+            if self.require_key_handles:
+                raise ValueError("PQC_REQUIRE_KEY_HANDLES requires a non-empty store_as handle")
+            return None
+        return validate_key_name(arguments["store_as"])
+
     def check_no_raw_secrets(self, arguments: dict[str, Any], secret_fields: list[str]) -> None:
         """Reject tool calls that pass raw secret keys when policy requires handles.
 
@@ -47,3 +55,10 @@ _POLICY = SecurityPolicy()
 def get_policy() -> SecurityPolicy:
     """Get the current server security policy."""
     return _POLICY
+
+
+def validate_key_name(name: Any) -> str:
+    """Names are bounded, unambiguous opaque handles, not filesystem paths."""
+    if not isinstance(name, str) or not name.strip() or len(name) > 128:
+        raise ValueError("Key handle must be a non-blank string of at most 128 characters")
+    return name

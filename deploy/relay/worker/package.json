@@ -1,20 +1,27 @@
 {
   "name": "quantum-seal-relay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "build": "wrangler deploy --dry-run --outdir dist",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "npm run test:local && npm run test:workers",
+    "test:watch": "vitest",
+    "test:local": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/local-worker.mjs && node --test test/local.test.mjs",
+    "test:workers": "vitest run"
   },
   "devDependencies": {
-    "wrangler": "^4.0.0",
+    "@cloudflare/vitest-plugin": "^1.4.11",
+    "@cloudflare/workers-types": "^5.20261101.1",
+    "esbuild": "^0.28.2",
     "typescript": "^5.0.0",
-    "@cloudflare/workers-types": "^4.0.0",
-    "vitest": "^3.0.0",
-    "@cloudflare/vitest-pool-workers": "^0.8.0"
-  }
+    "vitest": "^5.0.5",
+    "wrangler": "^4.156.0"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "type": "module"
 }

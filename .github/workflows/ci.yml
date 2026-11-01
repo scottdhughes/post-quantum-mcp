@@ -6,18 +6,21 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v4
-      - run: uv sync --all-extras
-      - run: uv run black --check pqc_mcp_server/ tests/
-      - run: uv run mypy pqc_mcp_server/
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --frozen --all-extras
+      - run: uv run --frozen black --check pqc_mcp_server/ tests/
+      - run: uv run --frozen mypy pqc_mcp_server/
 
   test:
     runs-on: ${{ matrix.os }}
@@ -27,8 +30,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -37,7 +40,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build
-          git clone --depth 1 --branch 0.15.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+          git clone --depth 1 --branch 0.16.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
           cd /tmp/liboqs && mkdir build && cd build
           cmake -GNinja -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local ..
           ninja && sudo ninja install
@@ -47,17 +50,41 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install cmake ninja
-          git clone --depth 1 --branch 0.15.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+          git clone --depth 1 --branch 0.16.0 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
           cd /tmp/liboqs && mkdir build && cd build
           cmake -GNinja -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local ..
           ninja && sudo ninja install
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Install Python dependencies
-        run: uv sync --all-extras
+        run: uv sync --frozen --all-extras --python ${{ matrix.python-version }}
 
       - name: Run tests
         env:
           LD_LIBRARY_PATH: /usr/local/lib
           DYLD_LIBRARY_PATH: /usr/local/lib
-        run: uv run pytest tests/ -v --tb=short
+        run: uv run --frozen pytest tests/ -v --tb=short
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv build
+      - run: uv venv /tmp/pqc-wheel-smoke
+      - run: uv pip install --python /tmp/pqc-wheel-smoke/bin/python dist/*.whl
+      - run: /tmp/pqc-wheel-smoke/bin/python -c "from importlib.metadata import version; assert version('post-quantum-mcp') == '0.10.0'"
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --frozen --all-extras --python 3.12
+      - run: uv tool run --from pip-audit==2.10.1 pip-audit --path .venv/lib/python3.12/site-packages --skip-editable

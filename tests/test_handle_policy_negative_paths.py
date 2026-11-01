@@ -238,3 +238,20 @@ class TestMissingHandle:
                     "expected_sender_fingerprint": "0" * 64,
                 }
             )
+
+
+@pytest.mark.parametrize("tool", ["pqc_hybrid_keygen", "pqc_generate_keypair"])
+@pytest.mark.parametrize("handle", [None, "", "   ", "x" * 129])
+async def test_policy_keygen_rejects_invalid_handles(call_tool, policy_enabled, tool, handle):
+    args = {"store_as": handle}
+    if tool == "pqc_generate_keypair":
+        args["algorithm"] = "ML-DSA-65"
+    result = await call_tool(tool, args)
+    assert "error" in result
+    assert "secret_key" not in str(result)
+
+
+async def test_policy_hybrid_keygen_requires_handle(call_tool, policy_enabled):
+    result = await call_tool("pqc_hybrid_keygen", {})
+    assert "error" in result
+    assert "classical" not in result

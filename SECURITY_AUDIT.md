@@ -1,5 +1,7 @@
 # Multi-Model Adversarial Security Review
 
+> Historical April audit. Current findings and repairs: [November 1 repair status](docs/reviews/2026-11-01-repair-status.md).
+
 > **Internal hardening review — not an external third-party audit.**
 
 **Review Period:** April 1–3, 2026
@@ -60,3 +62,17 @@ Aggregate audit testing covered approximately 15,750 inputs across all tiers. Re
 
 ## Recommendations
 Phase 3 work should prioritize a real network transport with authenticated delivery semantics and replay-state coordination, then add forward secrecy through PQXDH or a ratcheting session design. In parallel, publish a dated deprecation plan for `pqc-mcp-v1` so freshness checks become universal and documentation can converge on the v3 envelope model.
+
+## November 1, 2026 maintenance note
+
+The April review above is preserved as a historical record. Its fixed-finding
+counts and test totals do not establish the status of the current source.
+The November review found additional handle-policy bypasses and relay defects;
+see [the baseline review](docs/reviews/2026-11-01-repository-review.md) and
+[repair status](docs/reviews/2026-11-01-repair-status.md).
+
+The default local replay implementation is now transactional SQLite and fails
+closed. The legacy JSON ReplayCache remains only for diagnostic compatibility.
+The aligned liboqs 0.16.0/0.16.0.2 pair replaces the mismatch described above.
+Network transport exists, with operator-provisioned persistent mailbox credentials;
+live deployment/migration is separate. Forward secrecy remains unimplemented.
