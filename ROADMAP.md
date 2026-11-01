@@ -1,5 +1,7 @@
 # Roadmap — post-quantum-mcp + quantum-seal
 
+> Historical planning below. Current implementation and validation: [November 1 repair status](docs/reviews/2026-11-01-repair-status.md). Numerical self-grades are not release evidence.
+
 Generated 2026-04-02 via three-model adversarial review (Claude Opus 4.6, Codex GPT-5.4, Qwen 3.5).
 
 ## Current State (post v0.7.0 / pqc-mcp-v3)
@@ -71,3 +73,20 @@ Three-model adversarial review process:
 5. Stale references and doc drift caught and fixed
 
 Models: Claude Opus 4.6 (1M context), Codex GPT-5.4, Qwen 3.5 35B MoE (local, Ollama on RTX 4090)
+
+## November 1, 2026 update — replaces the historical scores above
+
+The v0.10.0 source repairs handle-policy bypasses, test isolation, relay
+credentials/consistency, byte budgets, native cleanup, and dependency drift.
+The relay now uses transactional SQLite-backed Durable Objects; production
+local replay state uses a strict SQLite store. The earlier “network transport
+missing” status and numerical self-grades are historical and are not current
+release claims.
+
+Current evidence and remaining operational work are in
+[repair status](docs/reviews/2026-11-01-repair-status.md). Deployment requires
+an explicit legacy mailbox migration; source readiness is not deployment.
+
+Next: select and review a session protocol for forward secrecy, prekey lifecycle,
+and post-compromise recovery. See [next-stage requirements](docs/forward-secrecy-next.md).
+The v3 sealed-envelope wire format is unchanged and has no forward-secrecy claim.

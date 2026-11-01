@@ -32,11 +32,8 @@ requires_liboqs = pytest.mark.skipif(
 @pytest.fixture(autouse=True)
 def clean():
     clear_store()
-    cache = get_replay_cache()
-    cache._cache.clear()
     yield
     clear_store()
-    cache._cache.clear()
 
 
 # ═══════════════════════════════════════════════

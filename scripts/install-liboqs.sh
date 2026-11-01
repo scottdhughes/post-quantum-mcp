@@ -2,18 +2,17 @@
 set -euo pipefail
 
 # Install liboqs from source for post-quantum-mcp
-# Usage: ./scripts/install-liboqs.sh [--prefix /usr/local] [--version 0.15.0]
+# Usage: ./scripts/install-liboqs.sh [--prefix /usr/local] [--version 0.16.0]
 
 PREFIX="/usr/local"
-VERSION="0.15.0"  # Matches CI and README "Tested Compatibility" — version skew with
-                  # liboqs-python 0.14.1 is documented and accepted (cosmetic warning).
-TMPDIR="${TMPDIR:-/tmp}"
+VERSION="0.16.0"  # Aligned with liboqs-python 0.16.x.
+PQC_BUILD_ROOT="${TMPDIR:-/tmp}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --prefix) PREFIX="$2"; shift 2 ;;
         --version) VERSION="$2"; shift 2 ;;
-        --help) echo "Usage: $0 [--prefix /path] [--version 0.15.0]"; exit 0 ;;
+        --help) echo "Usage: $0 [--prefix /path] [--version 0.16.0]"; exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -38,7 +37,7 @@ else
 fi
 
 # Clone and build
-BUILD_DIR="${TMPDIR}/liboqs-build-$$"
+BUILD_DIR="${PQC_BUILD_ROOT}/liboqs-build-$$"
 echo "Cloning liboqs ${VERSION}..."
 git clone --depth 1 --branch "${VERSION}" \
     https://github.com/open-quantum-safe/liboqs.git "${BUILD_DIR}"

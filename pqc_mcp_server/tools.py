@@ -373,8 +373,8 @@ PQC_TOOLS: list[Tool] = [
                 "max_decrypt_time": {
                     "type": "integer",
                     "description": (
-                        "Sender-imposed TTL in seconds. If set, the recipient "
-                        "cannot decrypt after timestamp + max_decrypt_time. "
+                        "Sender-imposed TTL in seconds. If set, "
+                        "this API refuses decryption after timestamp + max_decrypt_time. "
                         "This is sender-controlled (unlike max_age_seconds "
                         "which is recipient-controlled). Signed in transcript."
                     ),
@@ -424,7 +424,7 @@ PQC_TOOLS: list[Tool] = [
                     "type": "integer",
                     "description": (
                         "Max envelope age in seconds for freshness check"
-                        " (default 86400 = 24h, 0 = disabled)."
+                        " (default 86400 = 24h; must be positive)."
                         " v2 envelopes have signed timestamps; v1 envelopes"
                         " skip freshness regardless. Clock skew tolerance: 5 min."
                     ),
@@ -464,7 +464,7 @@ PQC_TOOLS: list[Tool] = [
                     "type": "integer",
                     "description": (
                         "Max envelope age in seconds for freshness check"
-                        " (default 86400 = 24h, 0 = disabled)."
+                        " (default 86400 = 24h; must be positive)."
                         " v2 envelopes have signed timestamps; v1 envelopes"
                         " skip freshness regardless. Clock skew tolerance: 5 min."
                     ),

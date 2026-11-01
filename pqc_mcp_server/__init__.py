@@ -14,6 +14,10 @@ Research/prototyping only — not recommended for production.
 
 import binascii
 import json
+import os
+import math
+import sys
+from contextlib import redirect_stdout
 from typing import Any
 import asyncio
 
@@ -26,7 +30,10 @@ from pqc_mcp_server.tools import PQC_TOOLS
 # --- Dependency availability flags ---
 
 try:
-    import oqs  # noqa: F401
+    # liboqs-python 0.16 installs an INFO logger on its imported stdout.
+    # Bind it to stderr before import so backend diagnostics cannot corrupt JSON-RPC.
+    with redirect_stdout(sys.stderr):
+        import oqs  # noqa: F401
 
     HAS_LIBOQS = True
 except (ImportError, RuntimeError, OSError):
@@ -121,6 +128,9 @@ if HAS_HYBRID:
         "pqc_key_store_delete": handle_key_store_delete,
     }
 
+_RELAY_HANDLERS: dict[str, Any] = {}
+_RELAY_CLIENT: Any = None
+
 # --- Pre-dispatch input validation ---
 
 # Size limits (bytes/chars)
@@ -163,7 +173,7 @@ _INT_FIELDS = frozenset({"iterations", "max_age_seconds", "max_decrypt_time"})
 
 _SIZE_LIMITS: dict[str, int] = {
     "plaintext": _MAX_PLAINTEXT_SIZE,
-    "plaintext_base64": _MAX_PLAINTEXT_SIZE,
+    "plaintext_base64": ((_MAX_PLAINTEXT_SIZE + 2) // 3) * 4,
     "message": _MAX_MESSAGE_SIZE,
     "public_key": _MAX_KEY_FIELD_SIZE,
     "secret_key": _MAX_KEY_FIELD_SIZE,
@@ -214,6 +224,68 @@ def _validate_arguments(arguments: dict[str, Any]) -> None:
                 raise ValueError(f"Parameter '{key}' must be a number, got {type(value).__name__}")
 
 
+# --- Relay configuration ---
+
+
+def _get_relay_config() -> dict[str, Any] | None:
+    """Return relay configuration dict, or None if relay is not enabled.
+
+    Returns None (silent skip) if PQC_RELAY_ENABLED != "1".
+    Raises RelayConfigError if enabled but misconfigured.
+    Raises ImportError if enabled but httpx is not importable.
+    """
+    if os.environ.get("PQC_RELAY_ENABLED") != "1":
+        return None
+
+    # Hard-fail if httpx is not importable
+    try:
+        import httpx  # noqa: F401
+    except ImportError as exc:
+        from pqc_mcp_server.relay_client import RelayConfigError
+
+        raise RelayConfigError(
+            "PQC_RELAY_ENABLED=1 but httpx is not installed. "
+            "Install with: pip install 'post-quantum-mcp[relay]'"
+        ) from exc
+
+    from pqc_mcp_server.relay_client import RelayConfigError, parse_relay_allowlist
+
+    # Hard-fail if allowlist is empty/unset
+    raw_urls = os.environ.get("PQC_RELAY_ALLOWED_URLS", "").strip()
+    if not raw_urls:
+        raise RelayConfigError(
+            "PQC_RELAY_ENABLED=1 but PQC_RELAY_ALLOWED_URLS is empty or unset. "
+            "Set it to a comma-separated list of allowed relay base URLs."
+        )
+
+    # Parse allowlist — allow_http only in explicit dev/test mode
+    allow_http = os.environ.get("PQC_RELAY_ALLOW_HTTP") == "1"
+    allowed_urls = parse_relay_allowlist(raw_urls, allow_http=allow_http)
+
+    # Optional timeout overrides
+    def _float_env(name: str, default: float) -> float:
+        raw = os.environ.get(name, "").strip()
+        if raw:
+            try:
+                value = float(raw)
+                if not math.isfinite(value) or value <= 0:
+                    raise ValueError()
+                return value
+            except ValueError:
+                raise RelayConfigError(f"{name} must be a finite positive number")
+        return default
+
+    from pqc_mcp_server.relay_credentials import load_mailbox_tokens
+
+    return {
+        "allowed_urls": allowed_urls,
+        "mailbox_tokens": load_mailbox_tokens(os.environ.get("PQC_RELAY_TOKEN_FILE"), allowed_urls),
+        "timeout_connect": _float_env("PQC_RELAY_TIMEOUT_CONNECT", 5.0),
+        "timeout_read": _float_env("PQC_RELAY_TIMEOUT_READ", 15.0),
+        "timeout_write": _float_env("PQC_RELAY_TIMEOUT_WRITE", 10.0),
+    }
+
+
 # --- MCP Server ---
 
 server = Server("pqc-mcp-server")
@@ -225,7 +297,12 @@ def _json_response(data: dict[str, Any]) -> list[TextContent]:
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    return PQC_TOOLS
+    tools = list(PQC_TOOLS)
+    if _RELAY_CLIENT is not None:
+        from pqc_mcp_server.relay_tools import RELAY_TOOLS
+
+        tools.extend(RELAY_TOOLS)
+    return tools
 
 
 @server.call_tool()
@@ -236,6 +313,15 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     except (ValueError, TypeError) as e:
         return _json_response({"error": str(e)})
 
+    # Relay tools are liboqs-independent — check them first so they work
+    # even when liboqs is absent.
+    if name in _RELAY_HANDLERS and _RELAY_CLIENT is not None:
+        try:
+            result = await asyncio.to_thread(_RELAY_HANDLERS[name], arguments, _RELAY_CLIENT)
+            return _json_response(result)
+        except Exception as e:
+            return _json_response({"error": str(e)})
+
     if not HAS_LIBOQS:
         return _json_response(
             {
@@ -245,7 +331,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             }
         )
 
-    # Check PQC handlers first
+    # Check PQC handlers
     if name in _PQC_HANDLERS:
         try:
             return _json_response(_PQC_HANDLERS[name](arguments))
@@ -288,6 +374,30 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
 
 async def run_server() -> None:
+    global _RELAY_CLIENT, _RELAY_HANDLERS
+
+    relay_config = _get_relay_config()
+    if relay_config is not None:
+        from pqc_mcp_server.relay_client import RelayClient
+        from pqc_mcp_server.relay_tools import (
+            handle_relay_deposit,
+            handle_relay_fetch,
+            handle_relay_ack,
+        )
+
+        _RELAY_CLIENT = RelayClient(
+            relay_config["allowed_urls"],
+            timeout_connect=relay_config["timeout_connect"],
+            timeout_read=relay_config["timeout_read"],
+            timeout_write=relay_config["timeout_write"],
+            mailbox_tokens=relay_config["mailbox_tokens"],
+        )
+        _RELAY_HANDLERS = {
+            "pqc_relay_deposit": handle_relay_deposit,
+            "pqc_relay_fetch": handle_relay_fetch,
+            "pqc_relay_ack": handle_relay_ack,
+        }
+
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 

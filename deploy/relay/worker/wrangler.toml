@@ -9,10 +9,22 @@ MESSAGE_TTL_SECONDS = "86400"     # 24 hours
 RATE_LIMIT_POST_PER_MIN = "60"
 RATE_LIMIT_GET_PER_MIN = "120"
 TRUSTED_IPS = ""              # comma-separated IPs that bypass rate limiting
-# For production: override with `wrangler secret put RELAY_ADMIN_TOKEN`
-# This default is for local dev/tests only — NOT a production credential.
-RELAY_ADMIN_TOKEN = "test-admin-token-do-not-use-in-production"
+# Provision with `wrangler secret put RELAY_ADMIN_TOKEN` (at least 16 characters).
+# The runtime rejects missing or development placeholder admin credentials.
 
+[[durable_objects.bindings]]
+name = "MAILBOXES"
+class_name = "Mailbox"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITERS"
+class_name = "RateLimiter"
+
+[[migrations]]
+tag = "v1-sqlite-mailboxes"
+new_sqlite_classes = ["Mailbox", "RateLimiter"]
+
+# Legacy namespace retained for operator-controlled drain/export; new routes do not read it.
 [[kv_namespaces]]
 binding = "MAILBOX"
 id = "705ade496106445a8b604f0a0c340ac8"

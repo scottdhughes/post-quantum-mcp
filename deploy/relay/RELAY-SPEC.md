@@ -1,205 +1,188 @@
-# Quantum Seal Relay — Transport Spec
+# Quantum Seal relay v0.2 — transactional transport contract
 
-## Overview
+Updated November 1, 2026. Envelope cryptography remains `pqc-mcp-v3`.
+This describes the repaired source; it does not assert that an existing public
+Worker has been upgraded.
 
-Opaque envelope mailbox relay. Stores and forwards PQC-sealed envelopes
-between agents without accessing private keys or decrypted content.
-The relay is a dumb pipe — it never performs cryptographic operations.
+## Storage and authorization
+
+`MAILBOXES` is a SQLite-backed Durable Object namespace. One actor per recipient
+fingerprint owns authorization, advisory sender filters, message rows, and retry
+receipts. All reads and mutations of that state are transactional. Registration
+is required; unknown mailboxes have no anonymous read/delete fallback.
+
+`RATE_LIMITERS` is a separate SQLite-backed Durable Object namespace, one actor
+per client IP. The legacy `MAILBOX` KV binding is retained for an operator-controlled
+migration; new routes never read or write it.
+
+Mailbox tokens are 72-character random UUID pairs. Only SHA-256 token hashes are
+stored. Authorization rows have no TTL. Message cleanup never changes credentials.
+Admin registration rotates the mailbox token while preserving messages and filters.
+All tokens grant access only to the corresponding mailbox or operator endpoints;
+this is transport access control, not end-to-end sender authentication.
+
+Provision an admin secret with `wrangler secret put RELAY_ADMIN_TOKEN` before
+using admin endpoints. It must have at least 16 characters. Missing credentials
+and the historical development placeholder fail closed with 503. Tests inject
+an isolated synthetic credential; no usable admin value is in deployable vars.
 
 ## Endpoints
 
-### POST /mailboxes/:recipient_fp
+Fingerprints must be 64 lowercase hex characters. Message IDs are UUIDs.
+All response bodies are JSON, with `Cache-Control: no-store`. Responses include
+permissive CORS; credentials must be explicitly supplied as bearer headers.
+The service never sends tokens in URLs.
 
-Deposit an envelope into a recipient's mailbox.
+| Endpoint | Method | Authorization | Success |
+|---|---|---|---|
+| `/health` or `/` | GET | None | Service/protocol/storage information |
+| `/mailboxes/:fp/register` | POST | Admin bearer | 201 `{mailbox, token, message}`; raw token returned once |
+| `/mailboxes/:fp` | POST | Existing registered mailbox; no bearer needed | 201 `{id, recipient_fp, received_at, size}` |
+| `/mailboxes/:fp` | GET | Mailbox bearer | 200 `{mailbox,count,messages,next_cursor}` |
+| `/mailboxes/:fp/:id` | DELETE | Mailbox bearer | 200 `{deleted}`; 404 if already absent |
+| `/mailboxes/:fp/allowlist` | PUT | Admin bearer | 200 `{mailbox,allowed_senders,mode}` |
 
-**Path params:**
-- `recipient_fp` — SHA3-256 hex fingerprint of recipient's classical public key (64 chars)
+GET/DELETE on an unregistered mailbox return 401. Deposits to one return 404.
+Invalid credentials return 401. Invalid bodies/parameters return 400; oversized
+bodies return 413; quota/rate exhaustion returns 429; storage unavailability
+returns 503. Unsupported methods return 405. Expected validation errors never
+fall through to an uncaught JavaScript exception.
 
-**Request body:** Raw JSON envelope (as produced by `pqc_hybrid_auth_seal`)
+### Deposit and retry behavior
 
-**Response:**
+The envelope must be a JSON object with nonempty string `version`, `suite`, and
+`ciphertext` fields. The relay does not verify cryptography. It measures UTF-8
+request bytes while streaming and cancels reads at the configured limit; it does
+not rely on Content-Length. Stored size describes canonicalized JSON bytes.
+
+An optional `Idempotency-Key` header must match `[A-Za-z0-9._:-]{1,128}`. Within
+the original message TTL, the same key and identical serialized envelope return
+the original receipt without inserting another message. Reusing a key for a
+different payload returns 409. Acknowledgment leaves the retry receipt until
+expiry, preventing a delayed retry from resurrecting an acknowledged message.
+There are at most 50,000 unexpired receipts per mailbox; at capacity new keyed
+deposits return 429 rather than evict live receipts.
+
+The Python client sorts JSON keys, emits compact UTF-8 JSON, and uses its SHA-256
+as the idempotency key. Repeating the same sealed envelope is a retry; resealing
+creates a fresh envelope/message. Other clients should preserve exact serialized
+payloads for retries. Without a key, repeated deposits are independent messages.
+After receipt expiry a key may be reused. Permanent exactly-once delivery is not
+promised.
+
+Message insertion and receipt insertion share one transaction. Failed transactions
+roll back. Expiration-alarm failures cannot change a committed deposit to an error.
+
+### Fetch, acknowledgment, and expiration
+
+GET accepts `limit` (positive integer, default 10, capped at 100) and `after`
+(the message-ID cursor returned by a preceding page). Messages are ordered by ID.
+A new polling pass should start without a cursor: a newly inserted random UUID
+may sort before an existing cursor. Pagination is not a frozen snapshot.
+
+Each message includes `{id,received_at,sender_fp,size,envelope}`. Empty registered
+mailboxes return `messages:[]` and `next_cursor:null`. The Python client treats
+DELETE 404 as successful acknowledgment; an unauthorized delete still fails.
+Expiry is enforced on every actor request and by cleanup alarms. Failed alarms
+may delay physical removal, but expired records are never returned or counted
+against live capacity on a subsequent successful request.
+
+The transport does not tie acknowledgment to successful decryption or application
+processing. Recipients must verify, decrypt, process durably, then acknowledge,
+and define their own crash-recovery policy.
+
+### Advisory sender filter
+
+PUT takes `{"allowed_senders":["<fp>"]}`; an empty array clears the filter.
+At most 1000 valid fingerprints are allowed. Values are matched against the
+**self-reported** `sender_key_fingerprint`, which is spoofable. This reduces junk
+from cooperating clients; it is not sender authentication. Recipients must use
+ML-DSA verification with an independently trusted sender identity.
+
+## Limits and observability
+
+| Setting | Default |
+|---|---|
+| `MAX_ENVELOPE_SIZE` | 51200 request bytes |
+| `MAX_MESSAGES_PER_MAILBOX` | 1000 live messages; enforced transactionally |
+| `MESSAGE_TTL_SECONDS` | 86400 seconds |
+| `RATE_LIMIT_POST_PER_MIN` | 60/IP/minute |
+| `RATE_LIMIT_GET_PER_MIN` | 120/IP/minute each for GET and DELETE |
+| Admin operations | 10/IP/minute, shared across register/filter operations |
+
+Rate windows are fixed one-minute buckets, not sliding windows. GET, POST,
+DELETE, and admin use distinct counters. Trusted operator-configured IPs may
+bypass rate limits. The deployed edge supplies `CF-Connecting-IP`; do not expose
+this Worker behind an ingress that trusts caller-spoofed copies of that header.
+Limiter failures fail closed. There is no per-request hot KV counter.
+
+Logs contain event, method, status, and latency. They do not contain request
+bodies, credentials, complete URLs, or mailbox fingerprints. A 503 can still
+represent an ambiguous network failure if the caller loses a committed response;
+idempotency is the recovery mechanism.
+
+## Python server configuration
+
+Enable with `PQC_RELAY_ENABLED=1`, set exact origins in `PQC_RELAY_ALLOWED_URLS`,
+and select an owner-only JSON credential file with `PQC_RELAY_TOKEN_FILE`:
+
 ```json
-{
-  "id": "<server-generated UUID>",
-  "recipient_fp": "<fingerprint>",
-  "received_at": "<ISO-8601>",
-  "size": 9087
-}
+[
+  {"relay_url":"https://relay.example","fingerprint":"<64 lowercase hex>","token":"<mailbox token>"}
+]
 ```
 
-**Status codes:**
-- `201 Created` — envelope stored
-- `400 Bad Request` — missing/invalid body, exceeds size limit
-- `403 Forbidden` — sender not in allowlist (if configured)
-- `413 Payload Too Large` — body exceeds 50KB
-- `429 Too Many Requests` — rate limited
+POSIX file permissions must exclude group/other access; ownership must match the
+server user. Symlinks are refused where O_NOFOLLOW is available. Malformed,
+unrecognized-origin, duplicate, or invalid records prevent startup. Credentials
+are not tool parameters and are scoped to origin plus mailbox. Editing the file
+requires a server restart to load rotated credentials.
 
-### GET /mailboxes/:recipient_fp
+HTTPS is required unless explicit local development enables `PQC_RELAY_ALLOW_HTTP=1`.
+Query/fragment/userinfo/path components are refused in base URLs; requests use the
+validated canonical origin. Redirects are never followed. Timeouts must be finite
+positive values. Responses are streamed with a 6,000,000-byte decoded cap, and
+untrusted error bodies are not reflected to the model. Relay network calls do
+not block the MCP event loop.
 
-Fetch pending envelopes for a recipient.
+## Migration from the KV relay — operator action, not automatic
 
-**Query params:**
-- `limit` — max envelopes to return (default 10, max 100)
-- `after` — opaque cursor for pagination (from `next_cursor` of previous response)
+1. Stage the repaired Worker under a separate name/environment. Deploy its
+   SQLite-class migration and provision an independent admin secret. Test against
+   that disposable endpoint before changing existing client origins.
+2. Inventory existing mailbox owners through trusted operator records. The new
+   relay deliberately does not infer ownership from public fingerprints or
+   missing/expired legacy metadata.
+3. Coordinate a maintenance window: stop new deposits to the old deployment,
+   let authenticated recipients drain/ack pending messages, or export encrypted
+   KV records with authorized operator tooling. Retain the old namespace as a
+   backup. Do not clear KV as part of this source upgrade.
+4. Register each mailbox in the new deployment and deliver its new token to the
+   authorized recipient outside model transcripts. Legacy tokens/filters are not
+   silently copied. Reapply filters explicitly if needed.
+5. Update clients' allowed origins and owner-only token files; restart them.
+   Replay locally preserved encrypted envelopes through the new endpoint only
+   when their recipient and sender verification requirements are known. Expired
+   envelopes may correctly fail freshness checks.
+6. Cut over ingress after authenticated send/fetch/verify/open/ack tests pass.
+   Keep the legacy deployment/data available for an agreed recovery period;
+   archive/remove them only in a separate reviewed operation.
 
-**Response:**
-```json
-{
-  "mailbox": "<fingerprint>",
-  "count": 3,
-  "messages": [
-    {
-      "id": "<UUID>",
-      "received_at": "<ISO-8601>",
-      "sender_fp": "<fingerprint from envelope metadata>",
-      "size": 9087,
-      "envelope": { ... }
-    }
-  ],
-  "next_cursor": "<opaque string or null>"
-}
+Deploying the source over a live KV Worker without this migration will make old
+mailboxes unavailable through new routes. This fail-closed behavior is intentional;
+no legacy messages or authorization records are deleted by the new code.
+
+## Validation
+
+`npm ci && npm run typecheck && npm test && npm run build` runs local contract
+checks against real SQLite and integration tests in workerd. Python tests default
+to offline operation. Explicit cross-process transport/crypto integration:
+
+```sh
+PQC_RELAY_E2E_URL=https://disposable-relay.example \
+PQC_RELAY_E2E_ADMIN_TOKEN='<operator-supplied disposable credential>' \
+uv run --frozen pytest -m e2e
 ```
 
-**Status codes:**
-- `200 OK` — messages returned (may be empty)
-- `404 Not Found` — mailbox does not exist (optional — or return empty)
-
-### DELETE /mailboxes/:recipient_fp/:message_id
-
-Acknowledge receipt and remove a message.
-
-**Response:**
-```json
-{
-  "deleted": "<message_id>"
-}
-```
-
-**Status codes:**
-- `200 OK` — deleted
-- `404 Not Found` — message not found
-
-## Limits
-
-| Limit | Value | Rationale |
-|-------|-------|-----------|
-| Max envelope size | 50 KB | Largest auth-seal envelope is ~22KB |
-| Max messages per mailbox | 1000 | Prevents unbounded storage |
-| Max mailboxes | 10,000 | Prevents abuse |
-| Message TTL | 24 hours | Aligns with replay cache TTL |
-| Rate limit (POST) | 60/min per IP | Prevents flooding |
-| Rate limit (GET) | 120/min per IP | Allows reasonable polling |
-
-## Retention
-
-- Messages expire after 24 hours (server-side TTL)
-- Expired messages are purged on next access or periodic cleanup
-- Deletion via DELETE is immediate
-
-## Sender Filtering
-
-Optional allowlist per mailbox. **Requires admin authentication.**
-
-### PUT /mailboxes/:recipient_fp/allowlist
-
-**Headers:**
-- `Authorization: Bearer <RELAY_ADMIN_TOKEN>` (required)
-
-```json
-{
-  "allowed_senders": ["<sender_fp_1>", "<sender_fp_2>"]
-}
-```
-
-**Status codes:**
-- `200 OK` — allowlist configured
-- `400 Bad Request` — invalid fingerprint format
-- `401 Unauthorized` — missing or invalid admin token
-- `429 Too Many Requests` — admin rate limited (10/min)
-
-When configured, POST checks `envelope.sender_key_fingerprint` against
-the allowlist before storing. Unknown senders get `403 Forbidden`.
-
-When not configured, all senders are accepted (open mailbox).
-
-Set `RELAY_ADMIN_TOKEN` as a Cloudflare Worker secret:
-```bash
-npx wrangler secret put RELAY_ADMIN_TOKEN
-```
-
-## Rate Limiting
-
-KV-backed sliding-window counter per client IP.
-
-| Method | Limit | Window |
-|--------|-------|--------|
-| POST | 60/min | 60 seconds |
-| GET | 120/min | 60 seconds |
-
-Configurable via `wrangler.toml` environment variables:
-- `RATE_LIMIT_POST_PER_MIN` — POST requests per minute per IP (default: 60)
-- `RATE_LIMIT_GET_PER_MIN` — GET requests per minute per IP (default: 120)
-- `TRUSTED_IPS` — comma-separated IPs that bypass rate limiting (default: empty)
-
-Example: `TRUSTED_IPS = "203.0.113.10,198.51.100.5"`
-
-Blocked requests return `429 Too Many Requests` with structured JSON log:
-```json
-{
-  "event": "rate_limit",
-  "action": "blocked",
-  "ip": "203.0.113.99",
-  "method": "POST",
-  "path": "/mailboxes/a1b2...",
-  "count": 60,
-  "limit": 60,
-  "remaining": 0,
-  "window": "ratelimit:post:203.0.113.99:27865660",
-  "timestamp": "2026-04-04T03:45:00.000Z"
-}
-```
-
-All requests (success + failure) emit a request-level log:
-```json
-{
-  "event": "request",
-  "method": "POST",
-  "path": "/mailboxes/a1b2...",
-  "status": 201,
-  "latency_ms": 45,
-  "timestamp": "2026-04-04T03:45:00.000Z"
-}
-```
-
-Rate limiting fails open on KV errors (request allowed, error logged).
-
-## Security Properties
-
-- **Relay sees:** envelope metadata (version, mode, fingerprints, sizes)
-- **Relay never sees:** plaintext, secret keys, shared secrets
-- **Relay does not verify:** signatures, timestamps, or crypto
-- **Integrity:** envelope is stored and returned byte-identical
-- **Confidentiality:** ciphertext is opaque to the relay
-- **No protocol changes:** v3 envelope format is unchanged
-
-## Storage Backend
-
-Cloudflare R2 (object storage) or KV (key-value):
-
-- **R2:** better for large envelopes, cheaper storage, no TTL built-in
-- **KV:** built-in TTL (expirationTtl), 25MB value limit, simpler API
-
-**Recommendation:** KV for MVP (simpler, has built-in TTL).
-
-Key format: `mailbox:{recipient_fp}:msg:{uuid}`
-Metadata: `mailbox:{recipient_fp}:meta` (allowlist, config)
-
-## Error Format
-
-All errors return:
-```json
-{
-  "error": "<short code>",
-  "message": "<human-readable description>"
-}
-```
+Use secret injection suitable for your environment rather than putting real
+credentials in command history. No public endpoint is selected by default.

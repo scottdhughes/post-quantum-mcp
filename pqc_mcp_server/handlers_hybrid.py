@@ -126,8 +126,8 @@ def handle_fingerprint(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_hybrid_keygen(arguments: dict[str, Any]) -> dict[str, Any]:
+    store_name = get_policy().keygen_handle(arguments)
     result = hybrid_keygen()
-    store_name = arguments.get("store_as")
     if store_name:
         overwrite = arguments.get("overwrite", False)
         store_from_keygen(store_name, result, overwrite=overwrite)
@@ -240,8 +240,8 @@ async def handle_hybrid_auth_open(arguments: dict[str, Any]) -> dict[str, Any]:
         }
         if max_age is not None:
             max_age_int = int(max_age)
-            if max_age_int < 0:
-                raise ValueError("max_age_seconds must be non-negative (0 = disabled)")
+            if max_age_int <= 0:
+                raise ValueError("max_age_seconds must be positive for replay-safe tool calls")
             cache_ttl = cache.ttl_seconds
             if max_age_int > cache_ttl:
                 raise ValueError(
@@ -286,8 +286,8 @@ def handle_hybrid_auth_verify(arguments: dict[str, Any]) -> dict[str, Any]:
     }
     if max_age is not None:
         max_age_int = int(max_age)
-        if max_age_int < 0:
-            raise ValueError("max_age_seconds must be non-negative (0 = disabled)")
+        if max_age_int <= 0:
+            raise ValueError("max_age_seconds must be positive for replay-safe tool calls")
         # Reject freshness windows exceeding replay cache TTL — otherwise
         # replays can succeed after cache entries expire (ChatGPT finding)
         cache_ttl = cache.ttl_seconds

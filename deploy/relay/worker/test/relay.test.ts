@@ -1,283 +1,202 @@
 import { describe, it, expect } from "vitest";
-import { SELF } from "cloudflare:test";
+import { runInDurableObject, evictDurableObject } from "cloudflare:test";
+import { env, exports } from "cloudflare:workers";
 
-const VALID_FP = "a".repeat(64);
-const VALID_FP_2 = "b".repeat(64);
-
-const MINIMAL_ENVELOPE = JSON.stringify({
+const ADMIN = "local-admin-secret";
+const ENVELOPE = {
   version: "pqc-mcp-v3",
-  mode: "auth-seal",
+  mode: "anon-seal",
   suite: "mlkem768-x25519-sha3-256",
-  sender_signature_algorithm: "ML-DSA-65",
-  sender_public_key: "dGVzdA==",
-  sender_key_fingerprint: VALID_FP_2,
-  recipient_classical_key_fingerprint: VALID_FP,
-  recipient_pqc_key_fingerprint: "c".repeat(64),
-  x25519_ephemeral_public_key: "dGVzdA==",
-  pqc_ciphertext: "dGVzdA==",
   ciphertext: "dGVzdA==",
-  timestamp: "1711929600",
-  signature: "dGVzdA==",
-});
+};
+const freshFp = () => crypto.randomUUID().replaceAll("-", "").repeat(2);
+function request(
+  fp: string,
+  method = "GET",
+  suffix = "",
+  body?: unknown,
+  token?: string,
+  extra: Record<string, string> = {},
+) {
+  return exports.default.fetch(
+    new Request(`https://relay/mailboxes/${fp}${suffix}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "CF-Connecting-IP": fp,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...extra,
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }),
+  );
+}
+async function registered() {
+  const fp = freshFp();
+  const response = await request(fp, "POST", "/register", undefined, ADMIN);
+  expect(response.status).toBe(201);
+  const data = (await response.json()) as { token: string };
+  return { fp, token: data.token };
+}
 
-describe("Health Check", () => {
-  it("returns service info", async () => {
-    const resp = await SELF.fetch("https://relay/");
-    expect(resp.status).toBe(200);
-    const data = await resp.json() as Record<string, string>;
-    expect(data.service).toBe("quantum-seal-relay");
-    expect(data.protocol).toBe("pqc-mcp-v3");
-  });
-});
-
-describe("POST /mailboxes/:fp", () => {
-  it("accepts a valid envelope", async () => {
-    const resp = await SELF.fetch(`https://relay/mailboxes/${VALID_FP}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: MINIMAL_ENVELOPE,
+describe("transactional relay in workerd", () => {
+  it("reports service health", async () => {
+    const response = await exports.default.fetch("https://relay/health");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      protocol: "pqc-mcp-v3",
+      storage: "durable-objects-sqlite",
     });
-    expect(resp.status).toBe(201);
-    const data = await resp.json() as Record<string, unknown>;
-    expect(data.id).toBeTruthy();
-    expect(data.recipient_fp).toBe(VALID_FP);
   });
-
-  it("rejects invalid JSON", async () => {
-    const resp = await SELF.fetch(`https://relay/mailboxes/${VALID_FP}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "not json!!!",
-    });
-    expect(resp.status).toBe(400);
+  it("fails closed for unknown mailboxes and unauthorized registration", async () => {
+    const fp = freshFp();
+    expect((await request(fp)).status).toBe(401);
+    expect((await request(fp, "POST", "", ENVELOPE)).status).toBe(404);
+    expect((await request(fp, "POST", "/register")).status).toBe(401);
   });
-
-  it("rejects envelope missing required fields", async () => {
-    const resp = await SELF.fetch(`https://relay/mailboxes/${VALID_FP}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ foo: "bar" }),
-    });
-    expect(resp.status).toBe(400);
-  });
-
-  it("rejects invalid fingerprint in path", async () => {
-    const resp = await SELF.fetch("https://relay/mailboxes/not-a-fingerprint", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: MINIMAL_ENVELOPE,
-    });
-    expect(resp.status).toBe(404);
-  });
-
-  it("rejects oversized envelope", async () => {
-    const huge = JSON.stringify({
-      version: "pqc-mcp-v3",
-      suite: "mlkem768-x25519-sha3-256",
-      ciphertext: "x".repeat(60000),
-    });
-    const resp = await SELF.fetch(`https://relay/mailboxes/${VALID_FP}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: huge,
-    });
-    expect(resp.status).toBe(413);
-  });
-});
-
-describe("GET /mailboxes/:fp", () => {
-  it("returns empty mailbox", async () => {
-    const fp = "d".repeat(64);
-    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}`);
-    expect(resp.status).toBe(200);
-    const data = await resp.json() as Record<string, unknown>;
-    expect(data.count).toBe(0);
-  });
-
-  it("returns deposited envelope", async () => {
-    const fp = "e".repeat(64);
-    // Deposit
-    await SELF.fetch(`https://relay/mailboxes/${fp}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: MINIMAL_ENVELOPE,
-    });
-    // Fetch
-    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}`);
-    expect(resp.status).toBe(200);
-    const data = await resp.json() as { count: number; messages: Array<{ envelope: Record<string, string> }> };
+  it("stores, authenticates, fetches, and acknowledges", async () => {
+    const { fp, token } = await registered();
+    const post = await request(fp, "POST", "", ENVELOPE);
+    expect(post.status).toBe(201);
+    const { id } = (await post.json()) as { id: string };
+    expect((await request(fp)).status).toBe(401);
+    expect(
+      (await request(fp, "GET", "", undefined, "wrong-token")).status,
+    ).toBe(401);
+    const data = (await (
+      await request(fp, "GET", "", undefined, token)
+    ).json()) as { count: number; messages: { envelope: unknown }[] };
     expect(data.count).toBe(1);
-    expect(data.messages[0].envelope.version).toBe("pqc-mcp-v3");
+    expect(data.messages[0].envelope).toEqual(ENVELOPE);
+    expect((await request(fp, "DELETE", `/${id}`)).status).toBe(401);
+    expect(
+      (await request(fp, "DELETE", `/${id}`, undefined, token)).status,
+    ).toBe(200);
+    expect(
+      (await request(fp, "DELETE", `/${id}`, undefined, token)).status,
+    ).toBe(404);
   });
-});
-
-describe("DELETE /mailboxes/:fp/:id", () => {
-  it("deletes a deposited message", async () => {
-    const fp = "f".repeat(64);
-    // Deposit
-    const postResp = await SELF.fetch(`https://relay/mailboxes/${fp}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: MINIMAL_ENVELOPE,
-    });
-    const postData = await postResp.json() as { id: string };
-
-    // Delete
-    const delResp = await SELF.fetch(`https://relay/mailboxes/${fp}/${postData.id}`, {
-      method: "DELETE",
-    });
-    expect(delResp.status).toBe(200);
-
-    // Verify gone
-    const getResp = await SELF.fetch(`https://relay/mailboxes/${fp}`);
-    const getData = await getResp.json() as { count: number };
-    expect(getData.count).toBe(0);
+  it("rotates credentials without reopening mailbox reads", async () => {
+    const { fp, token } = await registered();
+    const rotated = (await (
+      await request(fp, "POST", "/register", undefined, ADMIN)
+    ).json()) as { token: string };
+    expect((await request(fp, "GET", "", undefined, token)).status).toBe(401);
+    expect((await request(fp)).status).toBe(401);
+    expect(
+      (await request(fp, "GET", "", undefined, rotated.token)).status,
+    ).toBe(200);
   });
-
-  it("returns 404 for nonexistent message", async () => {
-    const fp = "f".repeat(64);
-    const resp = await SELF.fetch(
-      `https://relay/mailboxes/${fp}/00000000-0000-0000-0000-000000000000`,
-      { method: "DELETE" }
+  it("deduplicates concurrent retries transactionally", async () => {
+    const { fp, token } = await registered();
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        request(fp, "POST", "", ENVELOPE, undefined, {
+          "Idempotency-Key": "same-retry",
+        }),
+      ),
     );
-    expect(resp.status).toBe(404);
+    expect(responses.every((r) => r.status === 201)).toBe(true);
+    const ids = await Promise.all(
+      responses.map(async (r) => ((await r.json()) as { id: string }).id),
+    );
+    expect(new Set(ids).size).toBe(1);
+    expect(
+      await (await request(fp, "GET", "", undefined, token)).json(),
+    ).toMatchObject({ count: 1 });
+    expect(
+      (
+        await request(
+          fp,
+          "POST",
+          "",
+          { ...ENVELOPE, ciphertext: "different" },
+          undefined,
+          { "Idempotency-Key": "same-retry" },
+        )
+      ).status,
+    ).toBe(409);
   });
-});
-
-describe("PUT /mailboxes/:fp/allowlist", () => {
-  const ADMIN_TOKEN = "test-admin-token-do-not-use-in-production";
-  const adminHeaders = {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${ADMIN_TOKEN}`,
-  };
-
-  it("rejects unauthenticated allowlist mutation", async () => {
-    const fp = "1".repeat(64);
-    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}/allowlist`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ allowed_senders: [VALID_FP_2] }),
-    });
-    expect(resp.status).toBe(401);
+  it("rejects malformed bodies, byte oversize, and invalid pagination", async () => {
+    const { fp, token } = await registered();
+    for (const body of [null, [], { foo: "bar" }])
+      expect((await request(fp, "POST", "", body)).status).toBe(400);
+    expect(
+      (
+        await request(fp, "POST", "", {
+          ...ENVELOPE,
+          ciphertext: "é".repeat(26000),
+        })
+      ).status,
+    ).toBe(413);
+    expect(
+      (await request(fp, "GET", "?limit=0", undefined, token)).status,
+    ).toBe(400);
   });
-
-  it("configures sender allowlist with admin auth", async () => {
-    const fp = "1".repeat(64);
-    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}/allowlist`, {
-      method: "PUT",
-      headers: adminHeaders,
-      body: JSON.stringify({ allowed_senders: [VALID_FP_2] }),
-    });
-    expect(resp.status).toBe(200);
-    const data = await resp.json() as { mode: string };
-    expect(data.mode).toBe("allowlist");
+  it("advisory sender filters never remove authentication", async () => {
+    const { fp, token } = await registered();
+    const sender = freshFp();
+    expect(
+      (await request(fp, "PUT", "/allowlist", { allowed_senders: [sender] }))
+        .status,
+    ).toBe(401);
+    expect(
+      (
+        await request(
+          fp,
+          "PUT",
+          "/allowlist",
+          { allowed_senders: [sender] },
+          ADMIN,
+        )
+      ).status,
+    ).toBe(200);
+    expect((await request(fp, "POST", "", ENVELOPE)).status).toBe(403);
+    expect(
+      (
+        await request(fp, "POST", "", {
+          ...ENVELOPE,
+          sender_key_fingerprint: sender,
+        })
+      ).status,
+    ).toBe(201);
+    expect((await request(fp)).status).toBe(401);
+    expect((await request(fp, "GET", "", undefined, token)).status).toBe(200);
   });
-
-  it("blocks non-allowlisted sender", async () => {
-    const fp = "2".repeat(64);
-    // Set allowlist with admin auth
-    await SELF.fetch(`https://relay/mailboxes/${fp}/allowlist`, {
-      method: "PUT",
-      headers: adminHeaders,
-      body: JSON.stringify({ allowed_senders: ["c".repeat(64)] }),
+  it("expiry and actor eviction preserve mailbox credentials", async () => {
+    const { fp, token } = await registered();
+    const deposited = await request(fp, "POST", "", ENVELOPE);
+    expect(deposited.status).toBe(201);
+    await deposited.arrayBuffer();
+    const stub = env.MAILBOXES.get(env.MAILBOXES.idFromName(fp));
+    await runInDurableObject(stub, async (_instance, state) => {
+      state.storage.sql.exec("UPDATE messages SET expires_at=0");
     });
-    // Try to send from non-allowlisted sender
-    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: MINIMAL_ENVELOPE,  // sender_fp is VALID_FP_2, not "c"*64
-    });
-    expect(resp.status).toBe(403);
+    await evictDurableObject(stub);
+    expect((await request(fp)).status).toBe(401);
+    expect(
+      await (await request(fp, "GET", "", undefined, token)).json(),
+    ).toMatchObject({ count: 0 });
   });
-});
-
-describe("POST /mailboxes/:fp/register (mailbox token auth)", () => {
-  const ADMIN_TOKEN = "test-admin-token-do-not-use-in-production";
-  const adminHeaders = {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${ADMIN_TOKEN}`,
-  };
-
-  it("rejects unauthenticated registration", async () => {
-    const fp = "3".repeat(64);
-    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}/register`, {
-      method: "POST",
+  it("concurrent deposits enforce a full mailbox quota", async () => {
+    const { fp } = await registered();
+    const stub = env.MAILBOXES.get(env.MAILBOXES.idFromName(fp));
+    await runInDurableObject(stub, async (_instance, state) => {
+      for (let i = 0; i < 999; i++)
+        state.storage.sql.exec(
+          "INSERT INTO messages VALUES (?,?,?,?,?,?)",
+          `seed-${i}`,
+          JSON.stringify(ENVELOPE),
+          new Date().toISOString(),
+          Date.now() + 86400000,
+          "",
+          100,
+        );
     });
-    expect(resp.status).toBe(401);
-  });
-
-  it("registers mailbox and returns token", async () => {
-    const fp = "3".repeat(64);
-    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}/register`, {
-      method: "POST",
-      headers: adminHeaders,
-    });
-    expect(resp.status).toBe(201);
-    const data = await resp.json() as { mailbox: string; token: string };
-    expect(data.mailbox).toBe(fp);
-    expect(data.token).toBeTruthy();
-  });
-
-  it("requires token for GET after registration", async () => {
-    const fp = "4".repeat(64);
-    // Register
-    const regResp = await SELF.fetch(`https://relay/mailboxes/${fp}/register`, {
-      method: "POST",
-      headers: adminHeaders,
-    });
-    const { token } = await regResp.json() as { token: string };
-
-    // GET without token — rejected
-    const noAuthResp = await SELF.fetch(`https://relay/mailboxes/${fp}`);
-    expect(noAuthResp.status).toBe(401);
-
-    // GET with token — accepted
-    const authResp = await SELF.fetch(`https://relay/mailboxes/${fp}`, {
-      headers: { "Authorization": `Bearer ${token}` },
-    });
-    expect(authResp.status).toBe(200);
-  });
-
-  it("requires token for DELETE after registration", async () => {
-    const fp = "5".repeat(64);
-    // Register
-    const regResp = await SELF.fetch(`https://relay/mailboxes/${fp}/register`, {
-      method: "POST",
-      headers: adminHeaders,
-    });
-    const { token } = await regResp.json() as { token: string };
-
-    // Deposit a message (POST stays open — no token needed)
-    const postResp = await SELF.fetch(`https://relay/mailboxes/${fp}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: MINIMAL_ENVELOPE,
-    });
-    expect(postResp.status).toBe(201);
-    const { id } = await postResp.json() as { id: string };
-
-    // DELETE without token — rejected
-    const noAuthResp = await SELF.fetch(`https://relay/mailboxes/${fp}/${id}`, {
-      method: "DELETE",
-    });
-    expect(noAuthResp.status).toBe(401);
-
-    // DELETE with token — accepted
-    const authResp = await SELF.fetch(`https://relay/mailboxes/${fp}/${id}`, {
-      method: "DELETE",
-      headers: { "Authorization": `Bearer ${token}` },
-    });
-    expect(authResp.status).toBe(200);
-  });
-
-  it("POST stays open even after registration", async () => {
-    const fp = "5".repeat(64);
-    // POST without token — should still work (dumb pipe for deposits)
-    const resp = await SELF.fetch(`https://relay/mailboxes/${fp}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: MINIMAL_ENVELOPE,
-    });
-    expect(resp.status).toBe(201);
+    const replies = await Promise.all(
+      Array.from({ length: 6 }, () => request(fp, "POST", "", ENVELOPE)),
+    );
+    expect(replies.filter((r) => r.status === 201).length).toBe(1);
+    expect(replies.filter((r) => r.status === 429).length).toBe(5);
   });
 });
